@@ -55,6 +55,7 @@ def make_train(config):
     config["NUM_UPDATES"] = config["UPDATE_EPOCHS"]
 
     env, env_params = gymnax.make(config["ENV_NAME"])
+    env_params = env_params.replace(**config["ENV_PARAMS"])
     env = FlattenObservationWrapper(env)
     env = LogWrapper(env)
 
