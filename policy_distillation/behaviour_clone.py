@@ -68,8 +68,16 @@ def make_train(config):
         """Train using BC on synthetic data with fixed action labels and evaluate on RL environment"""
 
         # 1. INIT NETWORK AND TRAIN STATE
+        # TODO: This is hacky. Fix it to handle continuous actions elegantly
+
+        if "Continuous" in config["ENV_NAME"] or "Brax" in config["ENV_NAME"]:
+            action_shape = env.action_space().shape[0]
+            is_continuous = True
+        else:
+            action_shape = env.action_space().n
+            is_continuous = False
         network = BCAgent(
-            env.action_space(env_params).n, activation=config["ACTIVATION"], width=config["WIDTH"]
+            action_shape, activation=config["ACTIVATION"], width=config["WIDTH"]
         )
 
         rng, _rng = jax.random.split(rng)
@@ -113,6 +121,8 @@ def make_train(config):
                     loss /= labels.shape[0]
                     return loss, acc
 
+                # TODO: Add loss function for continuous case --> XENT?
+
                 grad_fn = jax.value_and_grad(_loss_and_acc, has_aux=True)
 
                 # Not needed if using entire dataset
@@ -126,7 +136,7 @@ def make_train(config):
                     train_state.apply_fn,
                     step_data,
                     y_true,
-                    env.action_space().n,
+                    action_shape,
                 )
                 train_state = train_state.apply_gradients(grads=grads)
                 bc_state = (train_state, rng)
