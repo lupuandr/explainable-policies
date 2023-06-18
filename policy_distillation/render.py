@@ -79,7 +79,6 @@ def render_cartpole(state, env_params):
         np.array(pygame.surfarray.pixels3d(screen)), axes=(1, 0, 2)
     )
 
-
 def render_acrobot(state, env_params):
     from numpy import cos, pi, sin
     screen_dim = 500
@@ -143,7 +142,6 @@ def render_acrobot(state, env_params):
     return np.transpose(
         np.array(pygame.surfarray.pixels3d(screen)), axes=(1, 0, 2)
     )
-
 
 def render_mountaincar(state, env_params):
     min_position = -1.2
@@ -287,3 +285,73 @@ def render_fourrooms(state, env_params):
     ax.set_xticks([])
     ax.set_yticks([])
     return fig, ax
+
+def render_pendulum(state, action, env_params):
+
+    # Render action
+    last_u = action
+
+    pygame.init()
+    screen = pygame.Surface((screen_dim, screen_dim))
+
+    surf = pygame.Surface((screen_dim, screen_dim))
+    surf.fill((255, 255, 255))
+
+    bound = 2.2
+    scale = screen_dim / (bound * 2)
+    offset = screen_dim // 2
+
+    rod_length = 1 * scale
+    rod_width = 0.2 * scale
+    l, r, t, b = 0, rod_length, rod_width / 2, -rod_width / 2
+    coords = [(l, b), (l, t), (r, t), (r, b)]
+    transformed_coords = []
+    for c in coords:
+        c = pygame.math.Vector2(c).rotate_rad(state[0] + np.pi / 2)
+        c = (c[0] + offset, c[1] + offset)
+        transformed_coords.append(c)
+    gfxdraw.aapolygon(surf, transformed_coords, (204, 77, 77))
+    gfxdraw.filled_polygon(surf, transformed_coords, (204, 77, 77))
+
+    gfxdraw.aacircle(surf, offset, offset, int(rod_width / 2), (204, 77, 77))
+    gfxdraw.filled_circle(
+        surf, offset, offset, int(rod_width / 2), (204, 77, 77)
+    )
+
+    rod_end = (rod_length, 0)
+    rod_end = pygame.math.Vector2(rod_end).rotate_rad(state[0] + np.pi / 2)
+    rod_end = (int(rod_end[0] + offset), int(rod_end[1] + offset))
+    gfxdraw.aacircle(
+        surf, rod_end[0], rod_end[1], int(rod_width / 2), (204, 77, 77)
+    )
+    gfxdraw.filled_circle(
+        surf, rod_end[0], rod_end[1], int(rod_width / 2), (204, 77, 77)
+    )
+
+    fname = path.join(path.dirname(__file__), "assets/clockwise.png")
+    img = pygame.image.load(fname)
+    if last_u is not None:
+        scale_img = pygame.transform.smoothscale(
+            img,
+            (scale * np.abs(last_u) / 2, scale * np.abs(last_u) / 2),
+        )
+        is_flip = bool(last_u > 0)
+        scale_img = pygame.transform.flip(scale_img, is_flip, True)
+        surf.blit(
+            scale_img,
+            (
+                offset - scale_img.get_rect().centerx,
+                offset - scale_img.get_rect().centery,
+            ),
+        )
+
+    # drawing axle
+    gfxdraw.aacircle(surf, offset, offset, int(0.05 * scale), (0, 0, 0))
+    gfxdraw.filled_circle(surf, offset, offset, int(0.05 * scale), (0, 0, 0))
+
+    surf = pygame.transform.flip(surf, False, True)
+    screen.blit(surf, (0, 0))
+
+    return np.transpose(
+        np.array(pygame.surfarray.pixels3d(screen)), axes=(1, 0, 2)
+    )
