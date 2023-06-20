@@ -1,6 +1,7 @@
 import pygame
 from pygame import gfxdraw
 import numpy as np
+from os import path
 
 
 def render_cartpole(state, env_params):
@@ -240,19 +241,19 @@ def render_fourrooms(state, env_params):
     import jax.numpy as jnp
 
     four_rooms_map = """
-    xxxxxxxxxxxxx
-    x     x     x
-    x     x     x
-    x           x
-    x     x     x
-    x     x     x
-    xx xxxx     x
-    x     xxx xxx
-    x     x     x
-    x     x     x
-    x           x
-    x     x     x
-    xxxxxxxxxxxxx"""
+xxxxxxxxxxxxx
+x     x     x
+x     x     x
+x           x
+x     x     x
+x     x     x
+xx xxxx     x
+x     xxx xxx
+x     x     x
+x     x     x
+x           x
+x     x     x
+xxxxxxxxxxxxx"""
 
     def _string_to_bool_map(str_map: str) -> chex.Array:
         """Convert string map into boolean walking map."""
@@ -290,6 +291,8 @@ def render_pendulum(state, action, env_params):
 
     # Render action
     last_u = action
+    
+    screen_dim = 500
 
     pygame.init()
     screen = pygame.Surface((screen_dim, screen_dim))
