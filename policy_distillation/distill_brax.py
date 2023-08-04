@@ -1,5 +1,4 @@
 import jax
-import jax
 import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
@@ -15,6 +14,9 @@ from gymnax.wrappers.purerl import GymnaxWrapper
 from brax import envs
 from brax.envs.wrappers.training import EpisodeWrapper, AutoResetWrapper
 from evosax import OpenES, ParameterReshaper
+
+import sys
+sys.path.insert(0, '..')
 from purejaxrl.wrappers import (
     LogWrapper,
     BraxGymnaxWrapper,
@@ -26,9 +28,6 @@ from purejaxrl.wrappers import (
 import time
 import argparse
 import pickle as pkl
-
-import sys
-sys.path.insert(0, '..')
 
 
 def wrap_brax_env(env, normalize=True, gamma=0.99):
