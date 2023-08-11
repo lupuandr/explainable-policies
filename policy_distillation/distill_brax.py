@@ -15,6 +15,8 @@ from brax import envs
 from brax.envs.wrappers.training import EpisodeWrapper, AutoResetWrapper
 from evosax import OpenES, ParameterReshaper
 
+import wandb
+
 import sys
 sys.path.insert(0, '..')
 from purejaxrl.wrappers import (
@@ -407,6 +409,15 @@ if __name__ == "__main__":
         "log_interval": args.log_interval,
     }
 
+    print("CONFIG")
+    print(config)
+    print("ES_CONFIG")
+    print(es_config)
+
+    wandb_config = config.copy()
+    wandb_config["es_config"] = es_config
+    wandb_run = wandb.init(project="Explainable Policies", config=wandb_config)
+
     # Init environment and dataset (params)
     env, env_params = init_env(config)
     params, param_reshaper = init_params(env, env_params, es_config)
@@ -469,7 +480,6 @@ if __name__ == "__main__":
         max_fitness_over_gen.append(fitness.max())
 
         # Logging
-        # TODO: replace by wandb
         if gen % es_config["log_interval"] == 0 or gen == 0:
             lap_end = time.time()
             if len(jax.devices()) > 1:
@@ -485,13 +495,28 @@ if __name__ == "__main__":
                 + f"BC mean error: {bc_acc.mean():.2f} +/- {bc_acc.std():.2f}, Lap time: {lap_end - lap_start:.1f}s"
             )
             lap_start = lap_end
+
+            wandb.log({
+                "mean_fitness" : fitness.mean(),
+                "fitness_std" : fitness.std(),
+                "max_fitness" : fitness.max(),
+                "BC_loss" : bc_loss.mean(),
+                "BC_accuracy" : bc_acc.mean(),
+                "Gen time" : lap_end - lap_start,
+            })
     print(f"Total time: {(lap_end - start) / 60:.1f}min")
 
-    data = {"state": state,
-            "fitness_over_gen": fitness_over_gen,
-            "max_fitness_over_gen": fitness_over_gen,
-            "fitness": fitness}
+    data = {
+        "state": state,
+        "fitness_over_gen": fitness_over_gen,
+        "max_fitness_over_gen": max_fitness_over_gen,
+        "fitness": fitness,
+        "config": config,
+        "es_config": es_config
+    }
 
+
+    # TODO: Change path
     directory = args.folder + f"brax_{config['ENV_NAME']}/"
     if not os.path.exists(directory):
         os.mkdir(directory)
