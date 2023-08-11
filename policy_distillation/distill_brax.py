@@ -28,6 +28,7 @@ from purejaxrl.wrappers import (
 import time
 import argparse
 import pickle as pkl
+import os
 
 
 def wrap_brax_env(env, normalize=True, gamma=0.99):
@@ -299,13 +300,13 @@ def parse_arguments():
         "--popsize",
         type=int,
         help="Number of state-action pairs",
-        default=500
+        default=512
     )
     parser.add_argument(
         "--generations",
         type=int,
         help="Number of ES generations",
-        default=100
+        default=200
     )
     parser.add_argument(
         "--rollouts",
@@ -401,7 +402,7 @@ if __name__ == "__main__":
     es_config = {
         "popsize": args.popsize,  # Num of candidates (variations) generated every generation
         "dataset_size": args.dataset_size, # Num of (s,a) pairs
-        "rollouts_per_candidate": args.num_rollouts,  # 32 Num of BC policies trained per candidate
+        "rollouts_per_candidate": args.rollouts,  # 32 Num of BC policies trained per candidate
         "n_generations": args.generations,
         "log_interval": args.log_interval,
     }
@@ -491,8 +492,11 @@ if __name__ == "__main__":
             "max_fitness_over_gen": fitness_over_gen,
             "fitness": fitness}
 
-    filename = f"{config['ENV_NAME']}/D{es_config['dataset_size']}_"\
-               + f"{config['activation']}{config['width']}.pkl"
-    file = open(args.folder + filename, 'wb')
+    directory = args.folder + f"brax_{config['ENV_NAME']}/"
+    if not os.path.exists(directory):
+        os.mkdir(directory)
+    
+    filename = directory + f"D{es_config['dataset_size']}_" + f"{config['ACTIVATION']}{config['WIDTH']}.pkl"
+    file = open(filename, 'wb')
     pkl.dump(data, file)
     file.close()
