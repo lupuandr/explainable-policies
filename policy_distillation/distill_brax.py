@@ -275,7 +275,7 @@ def init_es(rng_init, param_reshaper, es_config):
     # state = state.replace(mean = sampled_data)
 
     es_params = strategy.default_params
-    # es_params = es_params.replace(init_max=1.0)
+    es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_decay=es_config["sigma_decay"])
     state = strategy.initialize(rng_init, es_params)
 
     return strategy, es_params, state
@@ -315,6 +315,18 @@ def parse_arguments():
         type=int,
         help="Number of BC policies trained per candidate",
         default=16
+    )
+    parser.add_argument(
+        "--sigma_init",
+        type=float,
+        help="Initial ES variance",
+        default=0.03
+    )
+    parser.add_argument(
+        "--sigma_decay",
+        type=float,
+        help="ES variance decay factor",
+        default=1.0
     )
 
     # Inner loop args
@@ -407,6 +419,8 @@ if __name__ == "__main__":
         "rollouts_per_candidate": args.rollouts,  # 32 Num of BC policies trained per candidate
         "n_generations": args.generations,
         "log_interval": args.log_interval,
+        "sigma_init": args.sigma_init,
+        "sigma_decay": args.sigma_decay,
     }
 
     print("config")
@@ -526,14 +540,17 @@ if __name__ == "__main__":
         "es_config": es_config
     }
 
+    # directory = args.folder + f"brax_{config['ENV_NAME']}/"
+    # if not os.path.exists(directory):
+    #     os.mkdir(directory)
+    #
+    # filename = directory + f"D{es_config['dataset_size']}/"
+    # filename = filename + f"{config['ACTIVATION']}E{config['UPDATE_EPOCHS']}P{es_config['popsize']}{config['WIDTH']}.pkl"
 
-    # TODO: Change path
-    directory = args.folder + f"brax_{config['ENV_NAME']}/"
+    directory = args.folder
     if not os.path.exists(directory):
         os.mkdir(directory)
-    
-    filename = directory + f"D{es_config['dataset_size']}/"
-    filename = filename + f"{config['ACTIVATION']}E{config['UPDATE_EPOCHS']}P{es_config['popsize']}{config['WIDTH']}.pkl"
+    filename = directory + "data.pkl"
     file = open(filename, 'wb')
     pkl.dump(data, file)
     file.close()
