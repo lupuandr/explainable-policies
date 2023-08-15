@@ -409,14 +409,24 @@ if __name__ == "__main__":
         "log_interval": args.log_interval,
     }
 
-    print("CONFIG")
-    print(config)
+    print("config")
+    print("-----------------------------")
+    for k, v in config.items():
+        print(f"{k} : {v},")
+    print("-----------------------------")
     print("ES_CONFIG")
-    print(es_config)
+    for k, v in es_config.items():
+        print(f"{k} : {v},")
 
+    # Setup wandb
     wandb_config = config.copy()
     wandb_config["es_config"] = es_config
-    wandb_run = wandb.init(project="Explainable Policies", config=wandb_config)
+    wandb_run = wandb.init(project="Policy Distillation", config=wandb_config)
+    wandb.define_metric("D")
+    wandb.summary["D"] = es_config["dataset_size"]
+#     wandb.define_metric("mean_fitness", summary="last")
+#     wandb.define_metric("max_fitness", summary="last")
+    
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)
@@ -494,16 +504,17 @@ if __name__ == "__main__":
                 + f"Best: {state.best_fitness:.2f}, BC loss: {bc_loss.mean():.2f} +/- {bc_loss.std():.2f}, "
                 + f"BC mean error: {bc_acc.mean():.2f} +/- {bc_acc.std():.2f}, Lap time: {lap_end - lap_start:.1f}s"
             )
-            lap_start = lap_end
-
             wandb.log({
+                f"{config['ENV_NAME']}:mean_fitness" : fitness.mean(),
+                f"{config['ENV_NAME']}:fitness_std" : fitness.std(),
+                f"{config['ENV_NAME']}:max_fitness" : fitness.max(),
                 "mean_fitness" : fitness.mean(),
-                "fitness_std" : fitness.std(),
                 "max_fitness" : fitness.max(),
                 "BC_loss" : bc_loss.mean(),
                 "BC_accuracy" : bc_acc.mean(),
                 "Gen time" : lap_end - lap_start,
             })
+            lap_start = lap_end
     print(f"Total time: {(lap_end - start) / 60:.1f}min")
 
     data = {
@@ -521,7 +532,8 @@ if __name__ == "__main__":
     if not os.path.exists(directory):
         os.mkdir(directory)
     
-    filename = directory + f"D{es_config['dataset_size']}_" + f"{config['ACTIVATION']}{config['WIDTH']}.pkl"
+    filename = directory + f"D{es_config['dataset_size']}/"
+    filename = filename + f"{config['ACTIVATION']}E{config['UPDATE_EPOCHS']}P{es_config['popsize']}{config['WIDTH']}.pkl"
     file = open(filename, 'wb')
     pkl.dump(data, file)
     file.close()
