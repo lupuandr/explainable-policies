@@ -3,7 +3,13 @@
 env="ant"
 
 # Creating a temporary file to hold all combinations of parameters
-parameters_file=$(mktemp)
+# Define the parameters file path
+parameters_file="/private/home/alupu/explainable-policies/results/brax/${env}/sweep_logs/parameters_file.txt"
+
+# Ensure the directory exists
+mkdir -p $(dirname $parameters_file)
+
+
 for D in 4 16 64
 do
   for activation in tanh
@@ -44,10 +50,12 @@ sbatch --job-name "${env}_sweep" \
 #!/bin/bash
 
 # Read the corresponding line from the parameters file
-read env D activation width popsize epochs sigma_init sigma_decay seed folder < <(sed -n \${SLURM_ARRAY_TASK_ID}p $parameters_file)
+sed -n \${SLURM_ARRAY_TASK_ID}p $parameters_file | read env D activation width popsize epochs sigma_init sigma_decay seed folder
+
+echo \${SLURM_ARRAY_TASK_ID} : \${env} \${D} \${activation} \${width} \${popsize} \${epochs} \${sigma_init} \${sigma_decay} \${seed} \${folder}
 
 # Make the directory
-mkdir -p \$folder
+mkdir -p $folder
 
 # Execute the script
 python /private/home/alupu/explainable-policies/policy_distillation/distill_brax.py \\
