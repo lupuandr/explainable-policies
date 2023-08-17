@@ -529,7 +529,7 @@ if __name__ == "__main__":
                 f"{config['ENV_NAME']}:fitness_std" : fitness.std(),
                 f"{config['ENV_NAME']}:max_fitness" : fitness.max(),
                 "mean_ep_length" : mean_ep_length.mean(),
-                "max_ep_length" : mean_ep_length.mean(),
+                "max_ep_length" : mean_ep_length.max(),
                 "mean_fitness" : fitness.mean(),
                 "max_fitness" : fitness.max(),
                 "BC_loss" : bc_loss.mean(),
