@@ -412,6 +412,7 @@ if __name__ == "__main__":
         "GAMMA": 0.99,
         "NORMALIZE_ENV": True,
         "DEBUG": args.debug,
+        "SEED": args.seed,
     }
     es_config = {
         "popsize": args.popsize,  # Num of candidates (variations) generated every generation
@@ -490,7 +491,12 @@ if __name__ == "__main__":
             out = train_and_eval(batch_rng, shaped_datasets["states"], shaped_datasets["actions"])
 
             returns = out["metrics"]["returned_episode_returns"]  # dim=(popsize, rollouts, num_steps, num_envs)
+            ep_lengths = out["metrics"]["returned_episode_lengths"] 
             dones = out["metrics"]["returned_episode"]  # same dim, True for last steps, False otherwise
+            
+            mean_ep_length = (ep_lengths * dones).sum(axis=(-1, -2, -3)) / dones.sum(
+                axis=(-1, -2, -3))
+            mean_ep_length = mean_ep_length.flatten()
 
             # Division by zero, watch out
             fitness = (returns * dones).sum(axis=(-1, -2, -3)) / dones.sum(
@@ -522,6 +528,8 @@ if __name__ == "__main__":
                 f"{config['ENV_NAME']}:mean_fitness" : fitness.mean(),
                 f"{config['ENV_NAME']}:fitness_std" : fitness.std(),
                 f"{config['ENV_NAME']}:max_fitness" : fitness.max(),
+                "mean_ep_length" : mean_ep_length.mean(),
+                "max_ep_length" : mean_ep_length.mean(),
                 "mean_fitness" : fitness.mean(),
                 "max_fitness" : fitness.max(),
                 "BC_loss" : bc_loss.mean(),
