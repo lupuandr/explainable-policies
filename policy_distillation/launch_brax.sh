@@ -40,16 +40,16 @@
 # done
 
 # Split in two only to have different Slurm runtimes
-for env in "hopper" "reacher" "pusher" "inverted_pendulum" "inverted_double_pendulum"
+for env in "hopper" #"reacher" "pusher" "inverted_pendulum" "inverted_double_pendulum"
 do
-    for D in 2 4 64
+    for D in 4
     do
-        for epochs in 50 100 200 400
+        for epochs in 400
         do
             for seed in 0 1 2
             do 
                 echo $env ${D} ${epochs} ${seed}
-                folder="/private/home/alupu/explainable-policies/results/brax_individual_runs/${env}/D${D}_E${epochs}/seed${seed}/"
+                folder="/private/home/alupu/explainable-policies/results/brax_individual_runs/${env}/D${D}_E${epochs}_normalize_obs0/seed${seed}/"
                 mkdir -p ${folder}
                 sbatch --job-name "${env}_${D}" \
                        --partition learnfair \
@@ -71,6 +71,7 @@ do
                        --width 512 \
                        --seed ${seed} \
                        --folder ${folder} \
+                       --normalize_obs 0 \
                 "
             done
         done

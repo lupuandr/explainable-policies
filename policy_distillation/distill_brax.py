@@ -33,13 +33,14 @@ import pickle as pkl
 import os
 
 
-def wrap_brax_env(env, normalize=True, gamma=0.99):
+def wrap_brax_env(env, normalize_obs=True, normalize_reward=True, gamma=0.99):
     """Apply standard set of Brax wrappers"""
     env = LogWrapper(env)
     env = ClipAction(env)
     env = VecEnv(env)
-    if normalize:
+    if normalize_obs:
         env = NormalizeVecObservation(env)
+    if normalize_reward:
         env = NormalizeVecReward(env, gamma)
     return env
 
@@ -93,8 +94,9 @@ def make_train(config):
     env = LogWrapper(env)
     env = ClipAction(env)
     env = VecEnv(env)
-    if config["NORMALIZE_ENV"]:
+    if config["NORMALIZE_OBS"]:
         env = NormalizeVecObservation(env)
+    if config["NORMALIZE_REWARD"]:
         env = NormalizeVecReward(env, config["GAMMA"])
 
     # Do I need a schedule on the LR for BC?
@@ -249,7 +251,7 @@ def make_train(config):
 def init_env(config):
     """Initialize environment"""
     env, env_params = BraxGymnaxWrapper(config["ENV_NAME"]), None
-    env = wrap_brax_env(env, normalize=config["NORMALIZE_ENV"])
+    env = wrap_brax_env(env, normalize_obs=config["NORMALIZE_OBS"], normalize_reward=config["NORMALIZE_REWARD"])
     return env, env_params
 
 
@@ -360,6 +362,16 @@ def parse_arguments():
         help="NN learning rate",
         default=5e-3
     )
+    parser.add_argument(
+        "--normalize_obs",
+        type=int,
+        default=1
+    )
+    parser.add_argument(
+        "--normalize_reward",
+        type=int,
+        default=1
+    )
 
     # Misc. args
     parser.add_argument(
@@ -410,7 +422,8 @@ if __name__ == "__main__":
         "GREEDY_ACT": False,  # Whether to use greedy act in env or sample
         "ENV_PARAMS": {},
         "GAMMA": 0.99,
-        "NORMALIZE_ENV": True,
+        "NORMALIZE_OBS": bool(args.normalize_obs),
+        "NORMALIZE_REWARD": bool(args.normalize_reward),
         "DEBUG": args.debug,
         "SEED": args.seed,
     }
