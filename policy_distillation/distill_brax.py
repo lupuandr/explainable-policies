@@ -162,8 +162,16 @@ def make_train(config):
                 # Not needed if using entire dataset
                 rng, perm_rng = jax.random.split(rng)
                 perm = jax.random.permutation(perm_rng, len(action_labels))
+
                 step_data = synth_data[perm]
                 y_true = action_labels[perm]
+
+                rng, state_noise_rng, act_noise_rng = jax.random.split(rng, 3)
+                state_noise = jax.random.normal(state_noise_rng, step_data.shape)
+                act_noise = jax.random.normal(act_noise_rng, y_true.shape)
+
+                step_data = step_data + config["DATA_SIGMA"] * state_noise
+                y_true = step_data + config["DATA_SIGMA"] * act_noise
 
                 rng, grad_rng = jax.random.split(rng)
 
@@ -364,6 +372,12 @@ def parse_arguments(argstring=None):
         default=5e-3
     )
     parser.add_argument(
+        "--data_sigma",
+        type=float,
+        help="Noise added to data during BC",
+        default=0.0
+    )
+    parser.add_argument(
         "--normalize_obs",
         type=int,
         default=1
@@ -421,6 +435,7 @@ def make_configs(args):
         "ENV_NAME": args.env,
         "ANNEAL_LR": False,  # False for Brax?
         "GREEDY_ACT": False,  # Whether to use greedy act in env or sample
+        "DATA_SIGMA": args.data_sigma, # Add noise to data during BC training
         "ENV_PARAMS": {},
         "GAMMA": 0.99,
         "NORMALIZE_OBS": bool(args.normalize_obs),
@@ -482,6 +497,8 @@ def main(config, es_config):
     train_and_eval = jax.jit(
         jax.vmap(multi_seed_BC, in_axes=(None, 0, 0)))  # Vectorize over datasets
 
+
+    # TODO: Refactor to allow for different RNGs for each dataset
     if len(jax.devices()) > 1:
         # If available, distribute over multiple GPUs
         train_and_eval = jax.pmap(train_and_eval, in_axes=(None, 0, 0))
