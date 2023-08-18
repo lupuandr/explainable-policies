@@ -283,7 +283,8 @@ def init_es(rng_init, param_reshaper, es_config):
     return strategy, es_params, state
 
 
-def parse_arguments():
+def parse_arguments(argstring=None):
+    """Parse arguments either from `argstring` if not None or from command line otherwise"""
     parser = argparse.ArgumentParser()
     # Default arguments should result in ~1600 return in Hopper
 
@@ -397,7 +398,10 @@ def parse_arguments():
         action="store_true",
         default=False
     )
-    args = parser.parse_args()
+    if argstring is not None:
+        args = parser.parse_args(argstring.split())
+    else:
+        args = parser.parse_args()
 
     if args.folder[-1] != "/":
         args.folder = args.folder + "/"
@@ -405,10 +409,7 @@ def parse_arguments():
     return args
 
 
-if __name__ == "__main__":
-
-    args = parse_arguments()
-
+def make_configs(args):
     config = {
         "LR": args.lr,  # 3e-4 for Brax?
         "NUM_ENVS": args.eval_envs,  # 8 # Num eval envs for each BC policy
@@ -429,13 +430,17 @@ if __name__ == "__main__":
     }
     es_config = {
         "popsize": args.popsize,  # Num of candidates (variations) generated every generation
-        "dataset_size": args.dataset_size, # Num of (s,a) pairs
+        "dataset_size": args.dataset_size,  # Num of (s,a) pairs
         "rollouts_per_candidate": args.rollouts,  # 32 Num of BC policies trained per candidate
         "n_generations": args.generations,
         "log_interval": args.log_interval,
         "sigma_init": args.sigma_init,
         "sigma_decay": args.sigma_decay,
     }
+    return config, es_config
+
+
+def main(config, es_config):
 
     print("config")
     print("-----------------------------")
@@ -452,9 +457,8 @@ if __name__ == "__main__":
     wandb_run = wandb.init(project="Policy Distillation", config=wandb_config)
     wandb.define_metric("D")
     wandb.summary["D"] = es_config["dataset_size"]
-#     wandb.define_metric("mean_fitness", summary="last")
-#     wandb.define_metric("max_fitness", summary="last")
-    
+    #     wandb.define_metric("mean_fitness", summary="last")
+    #     wandb.define_metric("max_fitness", summary="last")
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)
@@ -504,9 +508,9 @@ if __name__ == "__main__":
             out = train_and_eval(batch_rng, shaped_datasets["states"], shaped_datasets["actions"])
 
             returns = out["metrics"]["returned_episode_returns"]  # dim=(popsize, rollouts, num_steps, num_envs)
-            ep_lengths = out["metrics"]["returned_episode_lengths"] 
+            ep_lengths = out["metrics"]["returned_episode_lengths"]
             dones = out["metrics"]["returned_episode"]  # same dim, True for last steps, False otherwise
-            
+
             mean_ep_length = (ep_lengths * dones).sum(axis=(-1, -2, -3)) / dones.sum(
                 axis=(-1, -2, -3))
             mean_ep_length = mean_ep_length.flatten()
@@ -538,16 +542,16 @@ if __name__ == "__main__":
                 + f"BC mean error: {bc_acc.mean():.2f} +/- {bc_acc.std():.2f}, Lap time: {lap_end - lap_start:.1f}s"
             )
             wandb.log({
-                f"{config['ENV_NAME']}:mean_fitness" : fitness.mean(),
-                f"{config['ENV_NAME']}:fitness_std" : fitness.std(),
-                f"{config['ENV_NAME']}:max_fitness" : fitness.max(),
-                "mean_ep_length" : mean_ep_length.mean(),
-                "max_ep_length" : mean_ep_length.max(),
-                "mean_fitness" : fitness.mean(),
-                "max_fitness" : fitness.max(),
-                "BC_loss" : bc_loss.mean(),
-                "BC_accuracy" : bc_acc.mean(),
-                "Gen time" : lap_end - lap_start,
+                f"{config['ENV_NAME']}:mean_fitness": fitness.mean(),
+                f"{config['ENV_NAME']}:fitness_std": fitness.std(),
+                f"{config['ENV_NAME']}:max_fitness": fitness.max(),
+                "mean_ep_length": mean_ep_length.mean(),
+                "max_ep_length": mean_ep_length.max(),
+                "mean_fitness": fitness.mean(),
+                "max_fitness": fitness.max(),
+                "BC_loss": bc_loss.mean(),
+                "BC_accuracy": bc_acc.mean(),
+                "Gen time": lap_end - lap_start,
             })
             lap_start = lap_end
     print(f"Total time: {(lap_end - start) / 60:.1f}min")
@@ -561,13 +565,6 @@ if __name__ == "__main__":
         "es_config": es_config
     }
 
-    # directory = args.folder + f"brax_{config['ENV_NAME']}/"
-    # if not os.path.exists(directory):
-    #     os.mkdir(directory)
-    #
-    # filename = directory + f"D{es_config['dataset_size']}/"
-    # filename = filename + f"{config['ACTIVATION']}E{config['UPDATE_EPOCHS']}P{es_config['popsize']}{config['WIDTH']}.pkl"
-
     directory = args.folder
     if not os.path.exists(directory):
         os.mkdir(directory)
@@ -575,3 +572,20 @@ if __name__ == "__main__":
     file = open(filename, 'wb')
     pkl.dump(data, file)
     file.close()
+
+
+def train_from_arg_string(argstring):
+    """Launches training from an argument string of the form
+    `--env humanoid --popsize 1024 --epochs 200 ...`
+    Main use case is in conjunction with Submitit for creating job arrays
+    """
+    args = parse_arguments(argstring)
+    config, es_config = make_configs(args)
+    main(config, es_config)
+
+
+if __name__ == "__main__":
+    args = parse_arguments()
+    config, es_config = make_configs(args)
+    main(config, es_config)
+
