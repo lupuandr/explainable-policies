@@ -170,8 +170,8 @@ def make_train(config):
                 state_noise = jax.random.normal(state_noise_rng, step_data.shape)
                 act_noise = jax.random.normal(act_noise_rng, y_true.shape)
 
-                step_data = step_data + config["DATA_SIGMA"] * state_noise
-                y_true = step_data + config["DATA_SIGMA"] * act_noise
+                step_data = step_data + config["DATA_NOISE"] * state_noise
+                y_true = y_true + config["DATA_NOISE"] * act_noise
 
                 rng, grad_rng = jax.random.split(rng)
 
@@ -372,7 +372,7 @@ def parse_arguments(argstring=None):
         default=5e-3
     )
     parser.add_argument(
-        "--data_sigma",
+        "--data_noise",
         type=float,
         help="Noise added to data during BC",
         default=0.0
@@ -435,7 +435,7 @@ def make_configs(args):
         "ENV_NAME": args.env,
         "ANNEAL_LR": False,  # False for Brax?
         "GREEDY_ACT": False,  # Whether to use greedy act in env or sample
-        "DATA_SIGMA": args.data_sigma, # Add noise to data during BC training
+        "DATA_NOISE": args.data_noise, # Add noise to data during BC training
         "ENV_PARAMS": {},
         "GAMMA": 0.99,
         "NORMALIZE_OBS": bool(args.normalize_obs),
