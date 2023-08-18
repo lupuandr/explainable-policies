@@ -17,7 +17,7 @@ jobs = []
 with executor.batch():
     for D in [4]:
         for env in ["reacher", "pusher"]:
-            for epochs in [100]:
+            for epochs in [200]:
                 for seed in [0, 1, 2]:
                     print(env, D, epochs, seed)
                     folder = f"/private/home/alupu/explainable-policies/results/brax_individual_runs/{env}/D{D}_E{epochs}/seed{seed}/"
@@ -26,7 +26,7 @@ with executor.batch():
                     argstring = \
                         f"--env {env} " \
                         f"--epochs {epochs} " \
-                        f"--dataset_size ${D} " \
+                        f"--dataset_size {D} " \
                         f"--generations 1000 " \
                         f"--popsize 2048 " \
                         f"--rollouts 2 " \

@@ -427,6 +427,7 @@ def make_configs(args):
         "NORMALIZE_REWARD": bool(args.normalize_reward),
         "DEBUG": args.debug,
         "SEED": args.seed,
+        "FOLDER": args.folder,
     }
     es_config = {
         "popsize": args.popsize,  # Num of candidates (variations) generated every generation
@@ -464,7 +465,7 @@ def main(config, es_config):
     env, env_params = init_env(config)
     params, param_reshaper = init_params(env, env_params, es_config)
 
-    rng = jax.random.PRNGKey(args.seed)
+    rng = jax.random.PRNGKey(config["SEED"])
 
     # Initialize OpenES Strategy
     rng, rng_init = jax.random.split(rng)
@@ -565,7 +566,7 @@ def main(config, es_config):
         "es_config": es_config
     }
 
-    directory = args.folder
+    directory = config["FOLDER"]
     if not os.path.exists(directory):
         os.mkdir(directory)
     filename = directory + "data.pkl"
