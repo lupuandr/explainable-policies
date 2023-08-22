@@ -11,8 +11,6 @@ import distrax
 import gymnax
 from gymnax.environments import environment, spaces
 from gymnax.wrappers.purerl import GymnaxWrapper
-from brax import envs
-from brax.envs.wrappers.training import EpisodeWrapper, AutoResetWrapper
 from evosax import OpenES, ParameterReshaper
 
 import wandb
@@ -21,11 +19,11 @@ import sys
 sys.path.insert(0, '..')
 from purejaxrl.wrappers import (
     LogWrapper,
-    BraxGymnaxWrapper,
     VecEnv,
-    NormalizeVecObservation,
-    NormalizeVecReward,
-    ClipAction,
+    FlattenObservationWrapper,
+    # ClipAction,
+    # NormalizeVecObservation,
+    # NormalizeVecReward,
 )
 import time
 import argparse
@@ -33,22 +31,20 @@ import pickle as pkl
 import os
 
 
-def wrap_brax_env(env, normalize_obs=True, normalize_reward=True, gamma=0.99):
+def wrap_minatar_env(env):
     """Apply standard set of Brax wrappers"""
+    env = FlattenObservationWrapper(env)
     env = LogWrapper(env)
-    env = ClipAction(env)
     env = VecEnv(env)
-    if normalize_obs:
-        env = NormalizeVecObservation(env)
-    if normalize_reward:
-        env = NormalizeVecReward(env, gamma)
     return env
 
-# Continuous action BC agent
-class BCAgentContinuous(nn.Module):
+
+class BCAgent(nn.Module):
+    """Network architecture. Matches MinAtar PPO agent from PureJaxRL"""
+
     action_dim: Sequence[int]
     activation: str = "tanh"
-    width: int = 64 #512 for Brax
+    width: int = 64
 
     @nn.compact
     def __call__(self, x):
@@ -67,8 +63,7 @@ class BCAgentContinuous(nn.Module):
         actor_mean = nn.Dense(
             self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
         )(actor_mean)
-        actor_logtstd = self.param("log_std", nn.initializers.zeros, (self.action_dim,))
-        pi = distrax.MultivariateNormalDiag(actor_mean, jnp.exp(actor_logtstd))
+        pi = distrax.Categorical(logits=actor_mean)
 
         return pi
 
@@ -90,28 +85,22 @@ def make_train(config):
     """
     config["NUM_UPDATES"] = config["UPDATE_EPOCHS"]
 
-    env, env_params = BraxGymnaxWrapper(config["ENV_NAME"]), None
+    env, env_params = gymnax.make(config["ENV_NAME"])
+    env = FlattenObservationWrapper(env)
     env = LogWrapper(env)
-    env = ClipAction(env)
     env = VecEnv(env)
-    if config["NORMALIZE_OBS"]:
-        env = NormalizeVecObservation(env)
-    if config["NORMALIZE_REWARD"]:
-        env = NormalizeVecReward(env, config["GAMMA"])
 
     # Do I need a schedule on the LR for BC?
     def linear_schedule(count):
         frac = 1.0 - (count // config["NUM_UPDATES"])
         return config["LR"] * frac
 
-    def train(synth_data, action_labels, rng):
+    def train(synth_data, action_probs, rng):
         """Train using BC on synthetic data with fixed action labels and evaluate on RL environment"""
 
-        action_shape = env.action_space(env_params).shape[0]
-        network = BCAgentContinuous(
-            action_shape, activation=config["ACTIVATION"], width=config["WIDTH"]
+        network = BCAgent(
+            env.action_space(env_params).n, activation=config["ACTIVATION"], width=config["WIDTH"]
         )
-
         rng, _rng = jax.random.split(rng)
         init_x = jnp.zeros(env.observation_space(env_params).shape)
         network_params = network.init(_rng, init_x)
@@ -146,16 +135,19 @@ def make_train(config):
 
                 def _loss_and_acc(params, apply_fn, step_data, y_true, num_classes, grad_rng):
                     """Compute cross-entropy loss and accuracy.
-                    y_true are prescribed actions, NOT action probabilities. Hence we take pi.log_prob(y_true)
+                    y_true are action pseudo-probabilites (sum may or may not =1), NOT actions in themselves.
+                    Hence take y_true*pi.log_prob(actions).
                     """
                     pi = apply_fn(params, step_data)
+                    all_actions = jnp.arange(num_classes)
                     y_pred = pi.sample(seed=grad_rng)
+                    y_pred = jax.nn.one_hot(y_pred, num_classes)
 
-                    acc = jnp.mean(jnp.abs(y_pred - y_true))
-                    log_prob = -pi.log_prob(y_true)
-                    loss = jnp.sum(log_prob)
-                    #                     loss = jnp.sum(jnp.abs(y_pred - y_true))
-                    loss /= y_true.shape[0]
+                    acc = jnp.mean( jnp.sum(jnp.abs(y_pred - y_true), axis=1) / 2 )
+                    negative_log_probs = -pi.log_prob(all_actions)
+                    # NOTE: y_true is not normalized and so may not sum to 1
+                    loss = jnp.sum(y_true * negative_log_probs)
+                    loss /= y_true.shape[0]         # Mean over dataset size
 
                     return loss, acc
 
@@ -163,17 +155,16 @@ def make_train(config):
 
                 # Not needed if using entire dataset
                 rng, perm_rng = jax.random.split(rng)
-                perm = jax.random.permutation(perm_rng, len(action_labels))
-
+                perm = jax.random.permutation(perm_rng, len(action_probs))
                 step_data = synth_data[perm]
-                y_true = action_labels[perm]
+                y_true = action_probs[perm]
 
-                rng, state_noise_rng, act_noise_rng = jax.random.split(rng, 3)
-                state_noise = jax.random.normal(state_noise_rng, step_data.shape)
-                act_noise = jax.random.normal(act_noise_rng, y_true.shape)
-
-                step_data = step_data + config["DATA_NOISE"] * state_noise
-                y_true = y_true + config["DATA_NOISE"] * act_noise
+                # rng, state_noise_rng, act_noise_rng = jax.random.split(rng, 3)
+                # state_noise = jax.random.normal(state_noise_rng, step_data.shape)
+                # act_noise = jax.random.normal(act_noise_rng, y_true.shape)
+                #
+                # step_data = step_data + config["DATA_NOISE"] * state_noise
+                # y_true = y_true + config["DATA_NOISE"] * act_noise
 
                 rng, grad_rng = jax.random.split(rng)
 
@@ -182,7 +173,7 @@ def make_train(config):
                     train_state.apply_fn,
                     step_data,
                     y_true,
-                    action_shape,
+                    env.action_space(env_params).n,
                     grad_rng
                 )
                 train_state = train_state.apply_gradients(grads=grads)
@@ -250,7 +241,7 @@ def make_train(config):
         metric["bc_accuracy"] = bc_acc
 
         metric["states"] = synth_data
-        metric["action_labels"] = action_labels
+        metric["action_probs"] = action_probs
         metric["rng"] = rng
 
         return {"runner_state": runner_state, "metrics": metric}
@@ -260,8 +251,8 @@ def make_train(config):
 
 def init_env(config):
     """Initialize environment"""
-    env, env_params = BraxGymnaxWrapper(config["ENV_NAME"]), None
-    env = wrap_brax_env(env, normalize_obs=config["NORMALIZE_OBS"], normalize_reward=config["NORMALIZE_REWARD"])
+    env, env_params = gymnax.make(config["ENV_NAME"])
+    env = wrap_minatar_env(env)
     return env, env_params
 
 
@@ -309,13 +300,13 @@ def parse_arguments(argstring=None):
         "--dataset_size",
         type=int,
         help="Number of state-action pairs",
-        default=4,
+        default=64,
     )
     parser.add_argument(
         "--popsize",
         type=int,
         help="Number of state-action pairs",
-        default=512
+        default=64
     )
     parser.add_argument(
         "--generations",
@@ -359,7 +350,7 @@ def parse_arguments(argstring=None):
         "--activation",
         type=str,
         help="NN nonlinearlity type (relu/tanh)",
-        default="tanh"
+        default="relu"
     )
     parser.add_argument(
         "--width",
@@ -382,12 +373,12 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--normalize_obs",
         type=int,
-        default=1
+        default=0
     )
     parser.add_argument(
         "--normalize_reward",
         type=int,
-        default=1
+        default=0
     )
 
     # Misc. args
@@ -435,7 +426,7 @@ def make_configs(args):
         "ACTIVATION": args.activation,
         "WIDTH": args.width,
         "ENV_NAME": args.env,
-        "ANNEAL_LR": False,  # False for Brax?
+        "ANNEAL_LR": True,  # False for Brax?
         "GREEDY_ACT": False,  # Whether to use greedy act in env or sample
         "DATA_NOISE": args.data_noise, # Add noise to data during BC training
         "ENV_PARAMS": {},
@@ -472,7 +463,7 @@ def main(config, es_config):
     # Setup wandb
     wandb_config = config.copy()
     wandb_config["es_config"] = es_config
-    wandb_run = wandb.init(project="Policy Distillation", config=wandb_config)
+    wandb_run = wandb.init(project="Policy Distillation - MinAtar", config=wandb_config)
     wandb.define_metric("D")
     wandb.summary["D"] = es_config["dataset_size"]
     #     wandb.define_metric("mean_fitness", summary="last")
@@ -491,8 +482,8 @@ def main(config, es_config):
     # Set up vectorized fitness function
     train_fn = make_train(config)
 
-    def single_seed_BC(rng_input, dataset, action_labels):
-        out = train_fn(dataset, action_labels, rng_input)
+    def single_seed_BC(rng_input, dataset, action_probs):
+        out = train_fn(dataset, action_probs, rng_input)
         return out
 
     multi_seed_BC = jax.vmap(single_seed_BC, in_axes=(0, None, None))  # Vectorize over seeds
