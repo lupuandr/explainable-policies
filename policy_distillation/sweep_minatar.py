@@ -20,15 +20,15 @@ executor.update_parameters(
     slurm_partition="learnfair",
     gpus_per_node=8,
     cpus_per_task=80,
-    timeout_min=900,
+    timeout_min=60,
     slurm_job_name="MinAtar"
 )
 
 jobs = []
 with executor.batch():
-    for D in [64]:
+    for D in [256]:
         for env in ["SpaceInvaders-MinAtar", "Breakout-MinAtar", "Freeway-MinAtar", "Asterix-MinAtar"]:
-            for epochs in [200, 400]:
+            for epochs in [100, 200, 400, 800]:
                 for seed in [0,1]:
                     print(env, D, epochs, seed)
                     folder = f"/private/home/alupu/explainable-policies/results/minatar/{env}/D{D}_E{epochs}/seed{seed}/"
@@ -38,7 +38,7 @@ with executor.batch():
                         f"--env {env} " \
                         f"--epochs {epochs} " \
                         f"--dataset_size {D} " \
-                        f"--generations 20000 " \
+                        f"--generations 1000 " \
                         f"--popsize 1024 " \
                         f"--rollouts 2 " \
                         f"--eval_envs 4 " \

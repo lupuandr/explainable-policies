@@ -12,6 +12,8 @@ import gymnax
 from gymnax.environments import environment, spaces
 from gymnax.wrappers.purerl import GymnaxWrapper
 from evosax import OpenES, ParameterReshaper
+from typing import Any, Optional, Union
+Array = Any
 
 import wandb
 
@@ -66,6 +68,21 @@ class BCAgent(nn.Module):
 #         pi = distrax.Categorical(logits=actor_mean)
 
         return actor_mean
+
+
+def softmax(
+    x,
+    axis: Optional[Union[int, tuple[int, ...]]] = -1,
+    where: Optional[Array] = None,
+    initial: Optional[Array] = None) -> Array:
+    """Custom softmax method, required because jax.nn.softmax throws a weird error due to a decorator"""
+    
+    x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
+    unnormalized = jnp.exp(x - x_max)
+    result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+    if where is not None:
+        result = jnp.where(where, result, 0)
+    return result
 
 
 class Transition(NamedTuple):
@@ -138,22 +155,39 @@ def make_train(config):
                     y_true are action pseudo-probabilites (sum may or may not =1), NOT actions in themselves.
                     Hence take y_true*pi.log_prob(actions).
                     """                   
-                    logits = apply_fn(params, step_data)
-                    logits = jax.nn.log_softmax(logits, axis=-1) # normalize
-                    pred_probs = jax.nn.softmax(logits, axis=-1)
-#                     pi = distrax.Categorical(logits)
-#                     all_actions = jnp.arange(num_classes)
-#                     y_pred = pi.sample(seed=grad_rng)
-#                     y_pred = jax.nn.one_hot(y_pred, num_classes)
-#                     acc = jnp.mean( jnp.sum(jnp.abs(y_pred - y_true), axis=1) / 2 )
+#                     logits = apply_fn(params, step_data)
+#                     logits = jax.nn.log_softmax(logits, axis=-1) # normalize
+#                     pred_probs = softmax(logits, axis=-1)
+# #                     pi = distrax.Categorical(logits)
+# #                     all_actions = jnp.arange(num_classes)
+# #                     y_pred = pi.sample(seed=grad_rng)
+# #                     y_pred = jax.nn.one_hot(y_pred, num_classes)
+# #                     acc = jnp.mean( jnp.sum(jnp.abs(y_pred - y_true), axis=1) / 2 )
 
-                    # Cosine similarity
-                    norm_constant = jnp.linalg.norm(pred_probs) * jnp.linalg.norm(y_true)
-                    acc = jnp.mean(pred_probs*y_true / norm_constant)
-                    negative_log_probs = -logits
-                    # NOTE: y_true is not normalized and so may not sum to 1. For now, assume that's fine
-                    loss = jnp.sum(y_true * negative_log_probs) # L_XENT = Sum_s Sum_a [-p(a|s)log q(a|s)]
-                    loss /= y_true.shape[0]         # Mean over dataset size
+#                     # Cosine similarity
+#                     norm_constant = jnp.linalg.norm(pred_probs, axis=-1, keepdims=True) * jnp.linalg.norm(y_true, axis=-1, keepdims=True)
+#                     acc = jnp.mean(pred_probs*y_true / norm_constant)
+#                     negative_log_probs = -logits
+#                     # NOTE: y_true is not normalized and so may not sum to 1. For now, assume that's fine
+#                     loss = jnp.sum(y_true * negative_log_probs) # L_XENT = Sum_s Sum_a [-p(a|s)log q(a|s)]
+#                     loss /= y_true.shape[0]         # Mean over dataset size
+
+                    logits = apply_fn(params, step_data)
+    
+                    # Compute softmax to get probabilities
+                    softmax_probs = softmax(logits)
+
+                    # Compute log probabilities
+                    log_probs = jnp.log(softmax_probs + 1e-10)
+
+                    # Compute the cross-entropy loss
+                    loss = -jnp.sum(y_true * log_probs) / step_data.shape[0]
+
+                    # Compute the accuracy (this part is optional and depends on what you specifically need)
+                    pred_class = jnp.argmax(logits, axis=-1)
+                    true_class = jnp.argmax(y_true, axis=-1)
+                    acc = jnp.mean(pred_class == true_class)
+
 
                     return loss, acc
 
@@ -217,8 +251,9 @@ def make_train(config):
                         axis=-1
                     )  # if 2+ actions are equiprobable, returns first
                 else:
-                    probs = distrax.Categorical(logits=pi)
-                    action = probs.sample(seed=_rng)
+#                     probs = distrax.Categorical(logits=pi)
+#                     action = probs.sample(seed=_rng)
+                    action = jax.random.categorical(_rng, logits=pi, axis=1)
 
                 # Step env
                 rng, _rng = jax.random.split(rng)
@@ -345,7 +380,7 @@ def parse_arguments(argstring=None):
         "--epochs",
         type=int,
         help="Number of BC epochs in the inner loop",
-        default=20
+        default=200
     )
     parser.add_argument(
         "--eval_envs",
@@ -386,6 +421,11 @@ def parse_arguments(argstring=None):
         "--normalize_reward",
         type=int,
         default=0
+    )
+    parser.add_argument(
+        "--greedy_act",
+        action="store_true",
+        default=True
     )
 
     # Misc. args
@@ -434,7 +474,7 @@ def make_configs(args):
         "WIDTH": args.width,
         "ENV_NAME": args.env,
         "ANNEAL_LR": True,  # False for Brax?
-        "GREEDY_ACT": False,  # Whether to use greedy act in env or sample
+        "GREEDY_ACT": args.greedy_act,  # Whether to use greedy act in env or sample
         "DATA_NOISE": args.data_noise, # Add noise to data during BC training
         "ENV_PARAMS": {},
         "GAMMA": 0.99,

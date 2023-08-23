@@ -109,7 +109,7 @@ with executor.batch():
         for env in ["ant"]:
             for seed in [0, 1]:
                 for epochs in [400]:
-                    for sigma_init in [0.0001, 0.0005, 0.001, 0.005, 0.01]:
+                    for sigma_init in [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05]:
                             print(env, D, epochs, sigma_init, seed)
                             folder = f"/private/home/alupu/explainable-policies/results/brax_individual_runs/{env}/D{D}_E{epochs}/si{sigma_init}/seed{seed}/"
                             if not os.path.exists(folder):
