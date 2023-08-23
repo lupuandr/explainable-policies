@@ -470,13 +470,14 @@ def main(config, es_config):
         print(f"{k} : {v},")
 
     # Setup wandb
-    wandb_config = config.copy()
-    wandb_config["es_config"] = es_config
-    wandb_run = wandb.init(project="Policy Distillation", config=wandb_config)
-    wandb.define_metric("D")
-    wandb.summary["D"] = es_config["dataset_size"]
-    #     wandb.define_metric("mean_fitness", summary="last")
-    #     wandb.define_metric("max_fitness", summary="last")
+    if not config["DEBUG"]:
+        wandb_config = config.copy()
+        wandb_config["es_config"] = es_config
+        wandb_run = wandb.init(project="Policy Distillation", config=wandb_config)
+        wandb.define_metric("D")
+        wandb.summary["D"] = es_config["dataset_size"]
+        #     wandb.define_metric("mean_fitness", summary="last")
+        #     wandb.define_metric("max_fitness", summary="last")
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)
@@ -522,7 +523,7 @@ def main(config, es_config):
         fitness = None
         shaped_datasets = None
 
-        with jax.disable_jit(False):
+        with jax.disable_jit(config["DEBUG"]):
             shaped_datasets = param_reshaper.reshape(datasets)
 
             out = train_and_eval(batch_rng, shaped_datasets["states"], shaped_datasets["actions"])
@@ -561,18 +562,19 @@ def main(config, es_config):
                 + f"Best: {state.best_fitness:.2f}, BC loss: {bc_loss.mean():.2f} +/- {bc_loss.std():.2f}, "
                 + f"BC mean error: {bc_acc.mean():.2f} +/- {bc_acc.std():.2f}, Lap time: {lap_end - lap_start:.1f}s"
             )
-            wandb.log({
-                f"{config['ENV_NAME']}:mean_fitness": fitness.mean(),
-                f"{config['ENV_NAME']}:fitness_std": fitness.std(),
-                f"{config['ENV_NAME']}:max_fitness": fitness.max(),
-                "mean_ep_length": mean_ep_length.mean(),
-                "max_ep_length": mean_ep_length.max(),
-                "mean_fitness": fitness.mean(),
-                "max_fitness": fitness.max(),
-                "BC_loss": bc_loss.mean(),
-                "BC_accuracy": bc_acc.mean(),
-                "Gen time": lap_end - lap_start,
-            })
+            if not config["DEBUG"]:
+                wandb.log({
+                    f"{config['ENV_NAME']}:mean_fitness": fitness.mean(),
+                    f"{config['ENV_NAME']}:fitness_std": fitness.std(),
+                    f"{config['ENV_NAME']}:max_fitness": fitness.max(),
+                    "mean_ep_length": mean_ep_length.mean(),
+                    "max_ep_length": mean_ep_length.max(),
+                    "mean_fitness": fitness.mean(),
+                    "max_fitness": fitness.max(),
+                    "BC_loss": bc_loss.mean(),
+                    "BC_accuracy": bc_acc.mean(),
+                    "Gen time": lap_end - lap_start,
+                })
             lap_start = lap_end
     print(f"Total time: {(lap_end - start) / 60:.1f}min")
 

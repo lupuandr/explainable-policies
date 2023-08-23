@@ -63,9 +63,9 @@ class BCAgent(nn.Module):
         actor_mean = nn.Dense(
             self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
         )(actor_mean)
-        pi = distrax.Categorical(logits=actor_mean)
+#         pi = distrax.Categorical(logits=actor_mean)
 
-        return pi
+        return actor_mean
 
 
 class Transition(NamedTuple):
@@ -137,16 +137,22 @@ def make_train(config):
                     """Compute cross-entropy loss and accuracy.
                     y_true are action pseudo-probabilites (sum may or may not =1), NOT actions in themselves.
                     Hence take y_true*pi.log_prob(actions).
-                    """
-                    pi = apply_fn(params, step_data)
-                    all_actions = jnp.arange(num_classes)
-                    y_pred = pi.sample(seed=grad_rng)
-                    y_pred = jax.nn.one_hot(y_pred, num_classes)
+                    """                   
+                    logits = apply_fn(params, step_data)
+                    logits = jax.nn.log_softmax(logits, axis=-1) # normalize
+                    pred_probs = jax.nn.softmax(logits, axis=-1)
+#                     pi = distrax.Categorical(logits)
+#                     all_actions = jnp.arange(num_classes)
+#                     y_pred = pi.sample(seed=grad_rng)
+#                     y_pred = jax.nn.one_hot(y_pred, num_classes)
+#                     acc = jnp.mean( jnp.sum(jnp.abs(y_pred - y_true), axis=1) / 2 )
 
-                    acc = jnp.mean( jnp.sum(jnp.abs(y_pred - y_true), axis=1) / 2 )
-                    negative_log_probs = -pi.log_prob(all_actions)
-                    # NOTE: y_true is not normalized and so may not sum to 1
-                    loss = jnp.sum(y_true * negative_log_probs)
+                    # Cosine similarity
+                    norm_constant = jnp.linalg.norm(pred_probs) * jnp.linalg.norm(y_true)
+                    acc = jnp.mean(pred_probs*y_true / norm_constant)
+                    negative_log_probs = -logits
+                    # NOTE: y_true is not normalized and so may not sum to 1. For now, assume that's fine
+                    loss = jnp.sum(y_true * negative_log_probs) # L_XENT = Sum_s Sum_a [-p(a|s)log q(a|s)]
                     loss /= y_true.shape[0]         # Mean over dataset size
 
                     return loss, acc
@@ -211,7 +217,8 @@ def make_train(config):
                         axis=-1
                     )  # if 2+ actions are equiprobable, returns first
                 else:
-                    action = pi.sample(seed=_rng)
+                    probs = distrax.Categorical(logits=pi)
+                    action = probs.sample(seed=_rng)
 
                 # Step env
                 rng, _rng = jax.random.split(rng)
@@ -222,7 +229,7 @@ def make_train(config):
                 #                 )(rng_step, env_state, action, env_params)
                 obsv, env_state, reward, done, info = env.step(rng_step, env_state, action, env_params)
                 transition = Transition(
-                    done, action, -1, reward, pi.log_prob(action), last_obs, info
+                    done, action, -1, reward, pi[action], last_obs, info
                 )
                 runner_state = (train_state, env_state, obsv, rng)
                 return runner_state, transition
@@ -260,7 +267,7 @@ def init_params(env, env_params, es_config):
     """Initialize dataset to be learned"""
     params = {
         "states": jnp.zeros((es_config["dataset_size"], *env.observation_space(env_params).shape)),
-        "actions": jnp.zeros((es_config["dataset_size"], *env.action_space(env_params).shape))
+        "actions": jnp.zeros((es_config["dataset_size"], env.action_space(env_params).n))
     }
     param_reshaper = ParameterReshaper(params)
     return params, param_reshaper
@@ -293,8 +300,8 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--env",
         type=str,
-        help="Brax environment name",
-        default="hopper"
+        help="Gymnax environment name",
+        default="SpaceInvaders-MinAtar"
     )
     parser.add_argument(
         "--dataset_size",
@@ -461,13 +468,14 @@ def main(config, es_config):
         print(f"{k} : {v},")
 
     # Setup wandb
-    wandb_config = config.copy()
-    wandb_config["es_config"] = es_config
-    wandb_run = wandb.init(project="Policy Distillation - MinAtar", config=wandb_config)
-    wandb.define_metric("D")
-    wandb.summary["D"] = es_config["dataset_size"]
-    #     wandb.define_metric("mean_fitness", summary="last")
-    #     wandb.define_metric("max_fitness", summary="last")
+    if not config["DEBUG"]:
+        wandb_config = config.copy()
+        wandb_config["es_config"] = es_config
+        wandb_run = wandb.init(project="Policy Distillation - MinAtar", config=wandb_config)
+        wandb.define_metric("D")
+        wandb.summary["D"] = es_config["dataset_size"]
+        #     wandb.define_metric("mean_fitness", summary="last")
+        #     wandb.define_metric("max_fitness", summary="last")
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)
@@ -487,9 +495,9 @@ def main(config, es_config):
         return out
 
     multi_seed_BC = jax.vmap(single_seed_BC, in_axes=(0, None, None))  # Vectorize over seeds
-    train_and_eval = jax.jit(
-        jax.vmap(multi_seed_BC, in_axes=(None, 0, 0)))  # Vectorize over datasets
-
+    train_and_eval = jax.vmap(multi_seed_BC, in_axes=(None, 0, 0))  # Vectorize over datasets
+    if not config["DEBUG"]:
+        train_and_eval = jax.jit(train_and_eval)
 
     # TODO: Refactor to allow for different RNGs for each dataset
     if len(jax.devices()) > 1:
@@ -513,7 +521,7 @@ def main(config, es_config):
         fitness = None
         shaped_datasets = None
 
-        with jax.disable_jit(False):
+        with jax.disable_jit(config["DEBUG"]):
             shaped_datasets = param_reshaper.reshape(datasets)
 
             out = train_and_eval(batch_rng, shaped_datasets["states"], shaped_datasets["actions"])
@@ -552,18 +560,19 @@ def main(config, es_config):
                 + f"Best: {state.best_fitness:.2f}, BC loss: {bc_loss.mean():.2f} +/- {bc_loss.std():.2f}, "
                 + f"BC mean error: {bc_acc.mean():.2f} +/- {bc_acc.std():.2f}, Lap time: {lap_end - lap_start:.1f}s"
             )
-            wandb.log({
-                f"{config['ENV_NAME']}:mean_fitness": fitness.mean(),
-                f"{config['ENV_NAME']}:fitness_std": fitness.std(),
-                f"{config['ENV_NAME']}:max_fitness": fitness.max(),
-                "mean_ep_length": mean_ep_length.mean(),
-                "max_ep_length": mean_ep_length.max(),
-                "mean_fitness": fitness.mean(),
-                "max_fitness": fitness.max(),
-                "BC_loss": bc_loss.mean(),
-                "BC_accuracy": bc_acc.mean(),
-                "Gen time": lap_end - lap_start,
-            })
+            if not config["DEBUG"]:
+                wandb.log({
+                    f"{config['ENV_NAME']}:mean_fitness": fitness.mean(),
+                    f"{config['ENV_NAME']}:fitness_std": fitness.std(),
+                    f"{config['ENV_NAME']}:max_fitness": fitness.max(),
+                    "mean_ep_length": mean_ep_length.mean(),
+                    "max_ep_length": mean_ep_length.max(),
+                    "mean_fitness": fitness.mean(),
+                    "max_fitness": fitness.max(),
+                    "BC_loss": bc_loss.mean(),
+                    "BC_accuracy": bc_acc.mean(),
+                    "Gen time": lap_end - lap_start,
+                })
             lap_start = lap_end
     print(f"Total time: {(lap_end - start) / 60:.1f}min")
 
