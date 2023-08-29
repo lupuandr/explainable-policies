@@ -1,5 +1,5 @@
 import submitit
-from distill_brax import train_from_arg_string
+from overfit_brax import train_from_arg_string
 import os
 import argparse
 
@@ -21,40 +21,38 @@ executor.update_parameters(
     slurm_partition="learnfair",
     gpus_per_node=8,
     cpus_per_task=80,
-    timeout_min=1000,
-    slurm_job_name="ant",
+    timeout_min=2000,
+    slurm_job_name="gymnax",
 )
 
 jobs = []
 with executor.batch():
     for env in ["ant", "halfcheetah", "walker2d"]:
-        for D in [4, 64]:
+        for D in [128]:
             for seed in [0, 1]:
-                for epochs in [100, 200, 400]:
-                    for sigma_init in [0.03]:
-                            print(env, D, epochs, sigma_init, seed)
-                            folder = f"/private/home/alupu/explainable-policies/results/overfit_brax/{env}/D{D}_E{epochs}/seed{seed}/"
-                            if not os.path.exists(folder):
-                                os.makedirs(folder)
-                            argstring = \
-                                f"--env {env} " \
-                                f"--epochs {epochs} " \
-                                f"--dataset_size {D} " \
-                                f"--generations 1000 " \
-                                f"--popsize 1024 " \
-                                f"--rollouts 1 " \
-                                f"--eval_envs 4 " \
-                                f"--width 512 " \
-                                f"--seed {seed} " \
-                                f"--folder {folder} " \
-                                f"--normalize_obs 1 " \
-                                f"--sigma_init {sigma_init} " \
+                for epochs in [400, 700, 1000]:
+                    print(env, D, epochs, seed)
+                    folder = f"/private/home/alupu/explainable-policies/results/overfit_brax/{env}/p2048_r2_e4/D{D}_E{epochs}/seed{seed}/"
+                    if not os.path.exists(folder):
+                        os.makedirs(folder)
+                    argstring = \
+                        f"--env {env} " \
+                        f"--epochs {epochs} " \
+                        f"--dataset_size {D} " \
+                        f"--generations 1000 " \
+                        f"--popsize 2048 " \
+                        f"--rollouts 2 " \
+                        f"--eval_envs 4 " \
+                        f"--width 512 " \
+                        f"--seed {seed} " \
+                        f"--folder {folder} " \
+                        f"--normalize_obs 1 " \
 
-                            if not args.dry:
-                                job = executor.submit(train_from_arg_string, argstring)
-                                jobs.append(job)
-                            else:
-                                print(argstring)
+                    if not args.dry:
+                        job = executor.submit(train_from_arg_string, argstring)
+                        jobs.append(job)
+                    else:
+                        print(argstring)
                                 
 print(f"Launched {len(jobs)} jobs. May the gradients be ever in your favour!")
 
@@ -69,33 +67,31 @@ executor.update_parameters(
 
 jobs = []
 with executor.batch():
-    for D in [4, 64]:
+    for D in [128]:
         for env in ["humanoid", "humanoidstandup"]:
             for seed in [0, 1]:
-                for epochs in [100, 200, 400]:
-                    for sigma_init in [0.03]:
-                        print(env, D, epochs, sigma_init, seed)
-                        folder = f"/private/home/alupu/explainable-policies/results/overfit_brax/{env}/D{D}_E{epochs}/seed{seed}/"
-                        if not os.path.exists(folder):
-                            os.makedirs(folder)
-                        argstring = \
-                            f"--env {env} " \
-                            f"--epochs {epochs} " \
-                            f"--dataset_size {D} " \
-                            f"--generations 1000 " \
-                            f"--popsize 1024 " \
-                            f"--rollouts 1 " \
-                            f"--eval_envs 4 " \
-                            f"--width 512 " \
-                            f"--seed {seed} " \
-                            f"--folder {folder} " \
-                            f"--normalize_obs 1 " \
-                            f"--sigma_init {sigma_init} " \
- \
-                                if not args.dry:
-                                    job = executor.submit(train_from_arg_string, argstring)
-                                    jobs.append(job)
-                                else:
-                                    print(argstring)
+                for epochs in [400, 700, 1000]:
+                    print(env, D, epochs, seed)
+                    folder = f"/private/home/alupu/explainable-policies/results/overfit_brax/p2048_r2_e4/{env}/D{D}_E{epochs}/seed{seed}/"
+                    if not os.path.exists(folder):
+                        os.makedirs(folder)
+                    argstring = \
+                        f"--env {env} " \
+                        f"--epochs {epochs} " \
+                        f"--dataset_size {D} " \
+                        f"--generations 1000 " \
+                        f"--popsize 2048 " \
+                        f"--rollouts 2 " \
+                        f"--eval_envs 4 " \
+                        f"--width 512 " \
+                        f"--seed {seed} " \
+                        f"--folder {folder} " \
+                        f"--normalize_obs 1 " \
+
+                    if not args.dry:
+                        job = executor.submit(train_from_arg_string, argstring)
+                        jobs.append(job)
+                    else:
+                        print(argstring)
 
 print(f"Launched {len(jobs)} jobs. May the gradients be ever in your favour!")

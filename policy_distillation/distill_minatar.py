@@ -181,6 +181,7 @@ def make_train(config):
                     log_probs = jnp.log(softmax_probs + 1e-10)
 
                     # Compute the cross-entropy loss
+#                     loss = -jnp.sum(softmax(y_true) * log_probs) / step_data.shape[0]
                     loss = -jnp.sum(y_true * log_probs) / step_data.shape[0]
 
                     # Compute the accuracy (this part is optional and depends on what you specifically need)
@@ -188,8 +189,17 @@ def make_train(config):
                     true_class = jnp.argmax(y_true, axis=-1)
                     acc = jnp.mean(pred_class == true_class)
 
-
                     return loss, acc
+                
+#                 def _loss_and_acc(params, apply_fn, step_data, y_true, num_classes, grad_rng):
+#                     """Compute cross-entropy loss and accuracy."""
+#                     logits = apply_fn(params, step_data)
+                    
+#                     loss = -jnp.sum(y_true * jax.nn.log_softmax(logits))
+#                     loss /= y_true.shape[0]
+                    
+#                     acc = jnp.mean(jnp.argmax(logits, axis=-1) == y_true)
+#                     return loss, acc
 
                 grad_fn = jax.value_and_grad(_loss_and_acc, has_aux=True)
 
@@ -404,7 +414,7 @@ def parse_arguments(argstring=None):
         "--lr",
         type=float,
         help="NN learning rate",
-        default=5e-3
+        default=5e-2
     )
     parser.add_argument(
         "--data_noise",
@@ -425,7 +435,7 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--greedy_act",
         action="store_true",
-        default=True
+        default=False
     )
 
     # Misc. args
@@ -598,7 +608,7 @@ def main(config, es_config):
             print(
                 f"Gen: {gen}, Fitness: {fitness.mean():.2f} +/- {fitness.std():.2f}, "
                 + f"Best: {state.best_fitness:.2f}, BC loss: {bc_loss.mean():.2f} +/- {bc_loss.std():.2f}, "
-                + f"BC mean error: {bc_acc.mean():.2f} +/- {bc_acc.std():.2f}, Lap time: {lap_end - lap_start:.1f}s"
+                + f"BC mean accuracy: {bc_acc.mean():.2f} +/- {bc_acc.std():.2f}, Lap time: {lap_end - lap_start:.1f}s"
             )
             if not config["DEBUG"]:
                 wandb.log({

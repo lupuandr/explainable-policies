@@ -20,16 +20,16 @@ executor.update_parameters(
     slurm_partition="learnfair",
     gpus_per_node=8,
     cpus_per_task=80,
-    timeout_min=60,
+    timeout_min=420,
     slurm_job_name="MNIST"
 )
 
 jobs = []
 with executor.batch():
-    for D in [100, 1000]:
+    for D in [10, 100, 1000]:
         for env in ["MNISTBandit-bsuite"]:
-            for epochs in [50, 100, 200]:
-                for width in [8, 64]:
+            for epochs in [50, 100, 200, 400, 800]:
+                for width in [512]:
                     for seed in [0,1]:
                         print(env, D, epochs, seed)
                         folder = f"/private/home/alupu/explainable-policies/results/mnist/{env}/D{D}_E{epochs}/{width}/seed{seed}/"
@@ -39,10 +39,10 @@ with executor.batch():
                             f"--env {env} " \
                             f"--epochs {epochs} " \
                             f"--dataset_size {D} " \
-                            f"--generations 1000 " \
+                            f"--generations 5000 " \
                             f"--popsize 1024 " \
-                            f"--rollouts 2 " \
-                            f"--eval_envs 4 " \
+                            f"--rollouts 4 " \
+                            f"--eval_envs 16 " \
                             f"--width {width} " \
                             f"--seed {seed} " \
                             f"--folder {folder} " \
