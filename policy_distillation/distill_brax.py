@@ -282,11 +282,12 @@ def init_es(rng_init, param_reshaper, es_config):
         num_dims=param_reshaper.total_params,
         opt_name="adam",
         maximize=True,
+        lrate_init=es_config["lrate_init"]  # Passing it here since for some reason cannot update it in params.replace
     )
     # Replace state mean with real observations
     # state = state.replace(mean = sampled_data)
 
-    es_params = strategy.default_params
+    es_params = strategy.params_strategy
     es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_decay=es_config["sigma_decay"])
     state = strategy.initialize(rng_init, es_params)
 
@@ -340,6 +341,12 @@ def parse_arguments(argstring=None):
         type=float,
         help="ES variance decay factor",
         default=1.0
+    )
+    parser.add_argument(
+        "--lrate_init",
+        type=float,
+        help="ES initial lrate",
+        default=0.05
     )
 
     # Inner loop args
@@ -454,6 +461,7 @@ def make_configs(args):
         "log_interval": args.log_interval,
         "sigma_init": args.sigma_init,
         "sigma_decay": args.sigma_decay,
+        "lrate_init": args.lrate_init,
     }
     return config, es_config
 

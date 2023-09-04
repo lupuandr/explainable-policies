@@ -109,9 +109,10 @@ with executor.batch():
         for env in ["ant"]:
             for seed in [0, 1]:
                 for epochs in [400]:
-                    for sigma_init in [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05]:
-                            print(env, D, epochs, sigma_init, seed)
-                            folder = f"/private/home/alupu/explainable-policies/results/brax_individual_runs/{env}/D{D}_E{epochs}/si{sigma_init}/seed{seed}/"
+                    for sigma_init in [0.03]:
+                        for lrate_init in [0.005, 0.01, 0.02, 0.04]:
+                            print(env, D, epochs, lrate_init, seed)
+                            folder = f"/private/home/alupu/explainable-policies/results/brax_individual_runs/{env}/D{D}_E{epochs}/si{sigma_init}_lri{lrate_init}/seed{seed}/"
                             if not os.path.exists(folder):
                                 os.makedirs(folder)
                             argstring = \
@@ -127,6 +128,7 @@ with executor.batch():
                                 f"--folder {folder} " \
                                 f"--normalize_obs 1 " \
                                 f"--sigma_init {sigma_init} " \
+                                f"--lrate_init {lrate_init} " \
 
                             if not args.dry:
                                 job = executor.submit(train_from_arg_string, argstring)
