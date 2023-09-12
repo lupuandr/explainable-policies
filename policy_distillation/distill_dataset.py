@@ -272,22 +272,54 @@ def make_train(config, train_images, train_labels, n_targets):
     return train
 
 
-def init_params(example_image, example_target, es_config):
+def init_params(rng, train_images, train_targets, es_config, n_targets):
     """Initialize dataset to be learned"""
+
+    samples_per_class = es_config["dataset_size"] // n_targets
+    if es_config["init_mode"] == "zero":
+        images = jnp.zeros((es_config["dataset_size"], *train_images[0].shape))
+        targets = jnp.zeros((es_config["dataset_size"], *train_targets[0].shape))
+
+    elif es_config["init_mode"] == "mean":
+        x_list = []
+        y_list = []
+        for target in range(n_targets):
+            target_idxs = (train_targets == jax.nn.one_hot(target, n_targets)).all(1)
+            mean_image = train_images[target_idxs].mean(0)
+            x_list.extend([mean_image]*samples_per_class)
+            y_list.extend([target]*samples_per_class)
+        images = jnp.array(x_list)
+        targets = jax.nn.one_hot(jnp.array(y_list), n_targets)
+
+    elif es_config["init_mode"] == "sample":
+        x_list = []
+        y_list = []
+        for target in range(n_targets):
+            target_idxs = (train_targets == jax.nn.one_hot(target, n_targets)).all(1)
+            target_images = train_images[target_idxs]
+            rng, perm_rng = jax.random.split(rng)
+            perm = jax.random.permutation(perm_rng, len(target_images))
+            mean_images = [x for x in target_images[perm][0:samples_per_class]]
+            x_list.extend(mean_images)
+            y_list.extend([target]*samples_per_class)
+        images = jnp.array(x_list)
+        targets = jax.nn.one_hot(jnp.array(y_list), n_targets)
+
     if es_config["learn_labels"]:
-        params = {
-            "images": jnp.zeros((es_config["dataset_size"], *example_image.shape)),
-            "targets": jnp.zeros((es_config["dataset_size"], *example_target.shape))
-        }
+        params = {"images": images, "targets": targets}
+        fixed_targets = None
     else:
-        params = {
-            "images": jnp.zeros((es_config["dataset_size"], *example_image.shape)),
-        }
+        params = {"images": images}
+        # Fix targets to one-hots since we're not learning them
+        y_list = []
+        for target in range(n_targets):
+            y_list.extend([target] * samples_per_class)
+        fixed_targets = jax.nn.one_hot(jnp.array(y_list), n_targets)
     param_reshaper = ParameterReshaper(params)
-    return params, param_reshaper
+    return params, param_reshaper, fixed_targets
 
 
-def init_es(rng_init, param_reshaper, es_config):
+def init_es(rng_init, param_reshaper, params, es_config):
     """Initialize OpenES strategy"""
     strategy = OpenES(
         popsize=es_config["popsize"],
@@ -302,6 +334,9 @@ def init_es(rng_init, param_reshaper, es_config):
     es_params = strategy.params_strategy
     es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_decay=es_config["sigma_decay"])
     state = strategy.initialize(rng_init, es_params)
+
+    # Warm start with custom params (determined init_params)
+    state = state.replace(mean=param_reshaper.flatten_single(params))
 
     return strategy, es_params, state
 
@@ -318,7 +353,6 @@ def parse_arguments(argstring=None):
         help="MNIST/FashionMNIST",
         default="MNIST"
     )
-
     parser.add_argument(
         "--dataset_size",
         type=int,
@@ -360,6 +394,18 @@ def parse_arguments(argstring=None):
         type=float,
         help="ES initial lrate",
         default=0.05
+    )
+    parser.add_argument(
+        "--learn_labels",
+        action="store_true",
+        help="Whether to evolve labels (if False, fix labels to one-hots)",
+        default=False
+    )
+    parser.add_argument(
+        "--init_mode",
+        type=str,
+        help="zero/sample/mean",
+        default="zero"
     )
 
     # Inner loop args
@@ -408,12 +454,6 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--normalize",
         action="store_true",
-        default=False
-    )
-    parser.add_argument(
-        "--learn_labels",
-        action="store_true",
-        help="Whether to evolve labels (if False, fix labels to one-hots)",
         default=False
     )
 
@@ -486,6 +526,7 @@ def make_configs(args):
         "sigma_decay": args.sigma_decay,
         "lrate_init": args.lrate_init,
         "learn_labels": args.learn_labels,
+        "init_mode": args.init_mode,
         "log_dataset": args.log_dataset
     }
     return config, es_config
@@ -513,34 +554,19 @@ def main(config, es_config):
 
     # Get real datasets, with some preprocessing
     train_images, train_targets, test_images, test_targets, n_targets = get_data(config)
-    # Initialize synthetic dataset
-    params, param_reshaper = init_params(train_images[0], train_targets[0], es_config)
-    # Fixed targets, used if not targets are not learned
-    samples_per_class = es_config["dataset_size"]//n_targets
-    fixed_labels = jnp.array([y for y in range(n_targets)]*samples_per_class)
-    fixed_targets = jax.nn.one_hot(fixed_labels, n_targets)
 
     rng = jax.random.PRNGKey(config["SEED"])
+    rng, rng_init_params = jax.random.split(rng)
+
+    # Initialize synthetic dataset
+    params, param_reshaper, fixed_targets = init_params(rng_init_params, train_images, train_targets, es_config, n_targets)
+    # Fixed targets, used if not targets are not learned
+    samples_per_class = es_config["dataset_size"]//n_targets
+
 
     # Initialize OpenES Strategy
     rng, rng_init = jax.random.split(rng)
-    strategy, es_params, state = init_es(rng_init, param_reshaper, es_config)
-
-    # TODO: ADD WARM INIT (currently only works for D=10)
-    x_list = []
-    y_list = []
-    imgs_per_class = 1
-    for digit in range(10):
-        digit_idxs = (train_targets == jax.nn.one_hot(digit, 10)).all(1)
-        mean_digit = train_images[digit_idxs].mean(0)
-        x_list.append(mean_digit)
-        y_list.append(digit)
-
-    images_init = {"images" : jnp.array(x_list)}
-    y_list = jnp.array(y_list)
-
-    # Warm start
-    state = state.replace(mean = param_reshaper.flatten_single(images_init))
+    strategy, es_params, state = init_es(rng_init, param_reshaper, params, es_config)
 
     # Set up vectorized fitness function
     train_fn = make_train(config, train_images, train_targets, n_targets)
@@ -581,8 +607,6 @@ def main(config, es_config):
         batch_rng = jax.random.split(rng_inner, es_config["rollouts_per_candidate"])
         # Preemptively overwrite to reduce memory load
         out = None
-        returns = None
-        dones = None
         fitness = None
         shaped_datasets = None
 
@@ -593,6 +617,7 @@ def main(config, es_config):
             else:
                 out = train_and_eval(batch_rng, shaped_datasets["images"], fixed_targets)
 
+            # TODO: VERIFY FITNESS + accuracy IS COMPUTED ADEQUATELY, esp. mean
             # Loss on real train data
             fitness = out["metrics"]["train_loss"].mean(-1)     # mean over the different rollouts
             fitness = fitness.flatten()     # Necessary if pmap-ing to 2+ devices
@@ -622,7 +647,7 @@ def main(config, es_config):
                 + f"Train accuracy: {train_acc.mean():.2f} +/- {train_acc.std():.2f}, Lap time: {lap_end - lap_start:.1f}s"
             )
             if not config["DEBUG"]:
-                wandb.log({
+                log_dict = {
                     f"{config['DATASET']}:mean_fitness": fitness.mean(),
                     f"{config['DATASET']}:fitness_std": fitness.std(),
                     f"{config['DATASET']}:min_fitness": fitness.min(),
@@ -634,7 +659,8 @@ def main(config, es_config):
                     "synth_accuracy": bc_acc.mean(),
                     "train_accuracy": train_acc.mean(),
                     "Gen time": lap_end - lap_start,
-                })
+                }
+
 
                 if es_config["log_dataset"] and (gen % (es_config["log_interval"]*10) == 0 or gen == 0):
                     final_dataset = param_reshaper.reshape_single(state.mean)
@@ -647,10 +673,10 @@ def main(config, es_config):
                         np.array(final_labels),
                         caption="Final labels"
                     )
-                    wandb.log({
-                        "Synth images": images,
-                        "Synth labels": labels,
-                    })
+                    log_dict["Synth images"] = images
+                    log_dict["Synth labels"] = labels
+
+                wandb.log(log_dict)
 
             lap_start = lap_end
     print(f"Total time: {(lap_end - start) / 60:.1f}min")
