@@ -652,17 +652,20 @@ def main(config, es_config):
                     f"{config['DATASET']}:fitness_std": fitness.std(),
                     f"{config['DATASET']}:min_fitness": fitness.min(),
                     f"{config['DATASET']}:synth_accuracy": bc_acc.mean(),
-                    f"{config['DATASET']}:train_accuracy": train_acc.min(),
-                    "mean_fitness": fitness.mean(),
-                    "min_fitness": fitness.min(),
-                    "synth_loss": bc_loss.mean(),
-                    "synth_accuracy": bc_acc.mean(),
-                    "train_accuracy": train_acc.mean(),
+                    f"{config['DATASET']}:train_accuracy": train_acc.mean(),
+                    f"{config['DATASET']}:synth_loss": bc_loss.mean(),
+#                     "mean_fitness": fitness.mean(),
+#                     "min_fitness": fitness.min(),
+#                     "synth_loss": bc_loss.mean(),
+#                     "synth_accuracy": bc_acc.mean(),
+#                     "train_accuracy": train_acc.mean(),
                     "Gen time": lap_end - lap_start,
                 }
 
 
-                if es_config["log_dataset"] and (gen % (es_config["log_interval"]*10) == 0 or gen == 0):
+                if es_config["log_dataset"] and (gen % (es_config["log_interval"]*10) == 0 
+                                                 or gen == 0 
+                                                 or gen == es_config["log_interval"]-1):
                     final_dataset = param_reshaper.reshape_single(state.mean)
                     images = wandb.Image(
                         np.hstack(final_dataset["images"].reshape(-1, 28, 28, 1)),
