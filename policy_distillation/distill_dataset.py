@@ -8,6 +8,7 @@ from typing import Sequence, NamedTuple, Any
 from flax.training.train_state import TrainState
 from flax import struct
 import distrax
+import chex
 
 from evosax import OpenES, ParameterReshaper
 from torch.utils import data
@@ -52,31 +53,63 @@ class MLP(nn.Module):
         return pi
 
 
-class CNN(nn.Module):
-    """A simple CNN model."""
+# class CNN(nn.Module):
+#     """A simple CNN model."""
 
-    action_dim: Sequence[int]
+#     action_dim: Sequence[int]
+#     activation: str = "relu"
+#     ffwd_width: int = 256
+
+#     @nn.compact
+#     def __call__(self, x):
+#         if self.activation == "relu":
+#             activation = nn.relu
+#         else:
+#             activation = nn.tanh
+#         x = nn.Conv(features=32, kernel_size=(3, 3))(x)
+#         x = activation(x)
+#         x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
+#         x = nn.Conv(features=64, kernel_size=(3, 3))(x)
+#         x = activation(x)
+#         x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
+#         x = x.reshape((x.shape[0], -1))  # flatten
+#         x = nn.Dense(features=self.ffwd_width)(x)
+#         x = activation(x)
+#         x = nn.Dense(features=self.action_dim)(x)
+#         pi = distrax.Categorical(logits=x)
+
+#         return pi
+
+
+def default_mlp_init(scale=0.05):
+    return nn.initializers.uniform(scale)
+
+class CNN(nn.Module):
+    """A general purpose conv net model."""
+
+    action_dim: int
+    ffwd_width: int = 128
     activation: str = "relu"
-    ffwd_width: int = 256
 
     @nn.compact
-    def __call__(self, x):
-        if self.activation == "relu":
-            activation = nn.relu
-        else:
-            activation = nn.tanh
-        x = nn.Conv(features=32, kernel_size=(3, 3))(x)
-        x = activation(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-        x = nn.Conv(features=64, kernel_size=(3, 3))(x)
-        x = activation(x)
-        x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-        x = x.reshape((x.shape[0], -1))  # flatten
-        x = nn.Dense(features=self.ffwd_width)(x)
-        x = activation(x)
+    def __call__(self, x: chex.Array) -> chex.Array:
+        x = nn.Conv(
+            features=16,
+            kernel_size=(3, 3),
+            padding="SAME",
+            strides=1,
+            bias_init=default_mlp_init(),
+        )(x)
+        x = nn.relu(x)
+        x = x.reshape((x.shape[0], -1))
+        x = nn.relu(
+            nn.Dense(
+                features=self.ffwd_width,
+                bias_init=default_mlp_init(),
+            )(x)
+        )
         x = nn.Dense(features=self.action_dim)(x)
         pi = distrax.Categorical(logits=x)
-
         return pi
 
 
@@ -163,6 +196,10 @@ def make_train(config, train_images, train_labels, n_targets):
     - Evaluate the classifier on the real train data
     """
     config["NUM_UPDATES"] = config["UPDATE_EPOCHS"]
+    
+    # Divide into minibatches, otherwise we get OOM when using a ConvNet. 500 is chosen arbitrarily (divides 60k nicely)
+    train_images = train_images.reshape(500, -1, *train_images[0].shape)
+    train_labels = train_labels.reshape(500, -1, *train_labels[0].shape)
 
     # Do I need a schedule on the LR for BC?
     def linear_schedule(count):
@@ -177,12 +214,12 @@ def make_train(config, train_images, train_labels, n_targets):
             network = CNN(n_targets, activation=config["ACTIVATION"], ffwd_width=config["WIDTH"])
 
         rng, _rng = jax.random.split(rng)
-        init_x = jnp.zeros(train_images[0].shape)
+        init_x = jnp.zeros(train_images[0,0].shape)
         network_params = network.init(_rng, init_x)
 
         assert (
-                synth_data[0].shape == train_images[0].shape
-        ), f"Synth data of shape {synth_data[0].shape} does not match real data of shape {train_images[0].shape}"
+                synth_data[0].shape == train_images[0,0].shape
+        ), f"Synth data of shape {synth_data[0].shape} does not match real data of shape {train_images[0,0].shape}"
 
         # Setup optimizer
         if config["ANNEAL_LR"]:
@@ -200,9 +237,9 @@ def make_train(config, train_images, train_labels, n_targets):
         batched_predict = jax.vmap(train_state.apply_fn, in_axes=(None, 0))
 
         # LOSS AND ACCURACY
-        def _loss_and_acc(params, images, targets):
+        def _loss_and_acc(params, data):
             """Compute cross-entropy loss and accuracy."""
-
+            images, targets = data
             preds = batched_predict(params, images)
             loss = -jnp.mean(preds.logits.reshape(targets.shape) * targets)
 
@@ -237,8 +274,7 @@ def make_train(config, train_images, train_labels, n_targets):
 
                 loss_and_acc, grads = grad_fn(
                     train_state.params,
-                    step_data,
-                    y_true,
+                    (step_data, y_true)
                 )
                 train_state = train_state.apply_gradients(grads=grads)
                 bc_state = (train_state, rng)
@@ -256,7 +292,11 @@ def make_train(config, train_images, train_labels, n_targets):
         train_state = bc_state[0]
 
         # 3. REAL DATA EVAL
-        train_loss, train_acc = _loss_and_acc(train_state.params, train_images, train_labels)
+        # Use map instead of vmap to prevent OOM
+        eval_func = jax.tree_util.Partial(_loss_and_acc, train_state.params)
+        train_loss, train_acc = jax.lax.map(eval_func, (train_images, train_labels))
+        train_loss = train_loss.mean()
+        train_acc = train_acc.mean()
 
         metric = {
             "synth_loss" : bc_loss,
@@ -326,13 +366,14 @@ def init_es(rng_init, param_reshaper, params, es_config):
         num_dims=param_reshaper.total_params,
         opt_name="adam",
         maximize=False,         # Maximize=False because the fitness is the train loss
-        lrate_init=es_config["lrate_init"]  # Passing it here since for some reason cannot update it in params.replace
+        lrate_init=es_config["lrate_init"],  # Passing it here since for some reason cannot update it in params.replace
+        lrate_decay=es_config["lrate_decay"]
     )
     # Replace state mean with real observations
     # state = state.replace(mean = sampled_data)
 
     es_params = strategy.params_strategy
-    es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_decay=es_config["sigma_decay"])
+    es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_limit=es_config["sigma_limit"], sigma_decay=es_config["sigma_decay"])
     state = strategy.initialize(rng_init, es_params)
 
     # Warm start with custom params (determined init_params)
@@ -384,6 +425,12 @@ def parse_arguments(argstring=None):
         default=0.03
     )
     parser.add_argument(
+        "--sigma_limit",
+        type=float,
+        help="ES variance lower bound (if decaying)",
+        default=0.01
+    )
+    parser.add_argument(
         "--sigma_decay",
         type=float,
         help="ES variance decay factor",
@@ -394,6 +441,12 @@ def parse_arguments(argstring=None):
         type=float,
         help="ES initial lrate",
         default=0.05
+    )
+    parser.add_argument(
+        "--lrate_decay",
+        type=float,
+        help="ES lrate decay factor",
+        default=1.0
     )
     parser.add_argument(
         "--learn_labels",
@@ -431,7 +484,7 @@ def parse_arguments(argstring=None):
         "--width",
         type=int,
         help="NN width",
-        default=512
+        default=128
     )
     parser.add_argument(
         "--lr",
@@ -523,8 +576,10 @@ def make_configs(args):
         "n_generations": args.generations,
         "log_interval": args.log_interval,
         "sigma_init": args.sigma_init,
+        "sigma_limit": args.sigma_limit,
         "sigma_decay": args.sigma_decay,
         "lrate_init": args.lrate_init,
+        "lrate_decay": args.lrate_decay,
         "learn_labels": args.learn_labels,
         "init_mode": args.init_mode,
         "log_dataset": args.log_dataset

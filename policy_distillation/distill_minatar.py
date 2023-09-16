@@ -174,20 +174,25 @@ def make_train(config):
 
                     logits = apply_fn(params, step_data)
     
+                    # MSE loss
+                    loss = jnp.mean((logits.squeeze() - y_true)**2)
+    
                     # Compute softmax to get probabilities
-                    softmax_probs = softmax(logits)
+#                     softmax_probs = softmax(logits)
 
                     # Compute log probabilities
-                    log_probs = jnp.log(softmax_probs + 1e-10)
+#                     log_probs = jnp.log(softmax_probs + 1e-10)
 
                     # Compute the cross-entropy loss
 #                     loss = -jnp.sum(softmax(y_true) * log_probs) / step_data.shape[0]
-                    loss = -jnp.sum(y_true * log_probs) / step_data.shape[0]
+#                     loss = -jnp.sum(y_true * log_probs) / step_data.shape[0]
 
                     # Compute the accuracy (this part is optional and depends on what you specifically need)
                     pred_class = jnp.argmax(logits, axis=-1)
                     true_class = jnp.argmax(y_true, axis=-1)
                     acc = jnp.mean(pred_class == true_class)
+                    
+#                     breakpoint()
 
                     return loss, acc
                 
