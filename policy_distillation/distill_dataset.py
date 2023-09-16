@@ -369,8 +369,6 @@ def init_es(rng_init, param_reshaper, params, es_config):
         lrate_init=es_config["lrate_init"],  # Passing it here since for some reason cannot update it in params.replace
         lrate_decay=es_config["lrate_decay"]
     )
-    # Replace state mean with real observations
-    # state = state.replace(mean = sampled_data)
 
     es_params = strategy.params_strategy
     es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_limit=es_config["sigma_limit"], sigma_decay=es_config["sigma_decay"])

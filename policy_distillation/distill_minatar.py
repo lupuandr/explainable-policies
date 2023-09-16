@@ -14,6 +14,7 @@ from gymnax.wrappers.purerl import GymnaxWrapper
 from evosax import OpenES, ParameterReshaper
 from typing import Any, Optional, Union
 Array = Any
+import chex
 
 import wandb
 
@@ -41,7 +42,7 @@ def wrap_minatar_env(env):
     return env
 
 
-class MLP(nn.Module):
+class BCAgent(nn.Module):
     """Network architecture. Matches MinAtar PPO agent from PureJaxRL"""
 
     action_dim: Sequence[int]
@@ -78,7 +79,7 @@ class MinAtarCNN(nn.Module):
 
     action_dim: int
     activation: str = "relu"
-    hidden_dims: Sequence[int]
+    hidden_dims: Sequence[int] = 64
 
     @nn.compact
     def __call__(self, x: chex.Array) -> chex.Array:
@@ -157,10 +158,14 @@ def make_train(config):
                 env.action_space(env_params).n, activation=config["ACTIVATION"], width=config["WIDTH"]
             )
         elif config["NET"].lower() == "cnn":
-            network = MinAtarCNN( env.action_space(env_params).n, activation=config["ACTIVATION"], hidden_dims=[config["WIDTH"]])
-
+            network = MinAtarCNN(
+                env.action_space(env_params).n, activation=config["ACTIVATION"], hidden_dims=[config["WIDTH"]]
+            )
 
         rng, _rng = jax.random.split(rng)
+        
+        # TODO: reshape to [1, *input_dim] for CNN. This also implies reshaping env observations and datasets.
+        # Alternatively, have the reshaping be done inside the network. I think that should work.
         init_x = jnp.zeros(env.observation_space(env_params).shape)
         network_params = network.init(_rng, init_x)
 
@@ -194,9 +199,8 @@ def make_train(config):
 
                 batched_predict = jax.vmap(train_state.apply_fn, in_axes=(None, 0))
 
-                def _loss_and_acc(params, step_data, y_true, num_classes):
+                def _loss_and_acc(params, step_data, targets):
                     """Compute cross-entropy loss and accuracy."""
-                    targets = jax.nn.one_hot(y_true, num_classes)
                     preds = batched_predict(params, step_data)
                     loss = -jnp.mean(preds.logits.reshape(targets.shape) * targets)
 
@@ -227,7 +231,6 @@ def make_train(config):
                     train_state.params,
                     step_data,
                     y_true,
-                    env.action_space(env_params).n,
                 )
                 train_state = train_state.apply_gradients(grads=grads)
                 bc_state = (train_state, rng)
@@ -264,9 +267,7 @@ def make_train(config):
                         axis=-1
                     )  # if 2+ actions are equiprobable, returns first
                 else:
-#                     probs = distrax.Categorical(logits=pi)
-#                     action = probs.sample(seed=_rng)
-                    action = jax.random.categorical(_rng, logits=pi, axis=1)
+                    action = pi.sample(seed=_rng)
 
                 # Step env
                 rng, _rng = jax.random.split(rng)
@@ -277,7 +278,7 @@ def make_train(config):
                 #                 )(rng_step, env_state, action, env_params)
                 obsv, env_state, reward, done, info = env.step(rng_step, env_state, action, env_params)
                 transition = Transition(
-                    done, action, -1, reward, pi[action], last_obs, info
+                    done, action, -1, reward, pi.log_prob(action), last_obs, info
                 )
                 runner_state = (train_state, env_state, obsv, rng)
                 return runner_state, transition
@@ -313,12 +314,25 @@ def init_env(config):
 
 def init_params(env, env_params, es_config):
     """Initialize dataset to be learned"""
-    params = {
-        "states": jnp.zeros((es_config["dataset_size"], *env.observation_space(env_params).shape)),
-        "actions": jnp.zeros((es_config["dataset_size"], env.action_space(env_params).n))
-    }
+
+    if es_config["learn_labels"]:
+        params = {
+            "states": jnp.zeros((es_config["dataset_size"], *env.observation_space(env_params).shape)),
+            "actions": jnp.zeros((es_config["dataset_size"], env.action_space(env_params).n))
+        }
+        fixed_targets = None
+    else:
+        params = {
+            "states": jnp.zeros((es_config["dataset_size"], *env.observation_space(env_params).shape))
+        }
+        # Fix targets to one-hots since we're not learning them
+        y_list = []
+        samples_per_action = es_config["dataset_size"] // env.action_space(env_params).n
+        for target in range(env.action_space(env_params).n):
+            y_list.extend([target] * samples_per_action)
+        fixed_targets = jax.nn.one_hot(jnp.array(y_list), env.action_space(env_params).n)
     param_reshaper = ParameterReshaper(params)
-    return params, param_reshaper
+    return params, param_reshaper, fixed_targets
 
 
 def init_es(rng_init, param_reshaper, es_config):
@@ -327,13 +341,13 @@ def init_es(rng_init, param_reshaper, es_config):
         popsize=es_config["popsize"],
         num_dims=param_reshaper.total_params,
         opt_name="adam",
-        maximize=True,
+        maximize=True,         # Maximize=False because the fitness is the train loss
+        lrate_init=es_config["lrate_init"],  # Passing it here since for some reason cannot update it in params.replace
+        lrate_decay=es_config["lrate_decay"]
     )
-    # Replace state mean with real observations
-    # state = state.replace(mean = sampled_data)
 
-    es_params = strategy.default_params
-    es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_decay=es_config["sigma_decay"])
+    es_params = strategy.params_strategy
+    es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_limit=es_config["sigma_limit"], sigma_decay=es_config["sigma_decay"])
     state = strategy.initialize(rng_init, es_params)
 
     return strategy, es_params, state
@@ -382,10 +396,34 @@ def parse_arguments(argstring=None):
         default=0.03
     )
     parser.add_argument(
+        "--sigma_limit",
+        type=float,
+        help="ES variance lower bound (if decaying)",
+        default=0.01
+    )
+    parser.add_argument(
         "--sigma_decay",
         type=float,
         help="ES variance decay factor",
         default=1.0
+    )
+    parser.add_argument(
+        "--lrate_init",
+        type=float,
+        help="ES initial lrate",
+        default=0.05
+    )
+    parser.add_argument(
+        "--lrate_decay",
+        type=float,
+        help="ES lrate decay factor",
+        default=1.0
+    )
+    parser.add_argument(
+        "--learn_labels",
+        action="store_true",
+        help="Whether to evolve labels (if False, fix labels to one-hots)",
+        default=False
     )
 
     # Inner loop args
@@ -511,7 +549,11 @@ def make_configs(args):
         "n_generations": args.generations,
         "log_interval": args.log_interval,
         "sigma_init": args.sigma_init,
+        "sigma_limit": args.sigma_limit,
         "sigma_decay": args.sigma_decay,
+        "lrate_init": args.lrate_init,
+        "lrate_decay": args.lrate_decay,
+        "learn_labels": args.learn_labels,
     }
     return config, es_config
 
@@ -539,7 +581,7 @@ def main(config, es_config):
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)
-    params, param_reshaper = init_params(env, env_params, es_config)
+    params, param_reshaper, fixed_targets = init_params(env, env_params, es_config)
 
     rng = jax.random.PRNGKey(config["SEED"])
 
@@ -555,14 +597,25 @@ def main(config, es_config):
         return out
 
     multi_seed_BC = jax.vmap(single_seed_BC, in_axes=(0, None, None))  # Vectorize over seeds
-    train_and_eval = jax.vmap(multi_seed_BC, in_axes=(None, 0, 0))  # Vectorize over datasets
+    if es_config["learn_labels"]:
+        # vmap over images and labels
+        train_and_eval = jax.jit(jax.vmap(multi_seed_BC, in_axes=(None, 0, 0)))  # Vectorize over datasets
+    else:
+        # vmap over images only
+        train_and_eval = jax.jit(jax.vmap(multi_seed_BC, in_axes=(None, 0, None)))  # Vectorize over datasets
+        
     if not config["DEBUG"]:
         train_and_eval = jax.jit(train_and_eval)
 
     # TODO: Refactor to allow for different RNGs for each dataset
     if len(jax.devices()) > 1:
         # If available, distribute over multiple GPUs
-        train_and_eval = jax.pmap(train_and_eval, in_axes=(None, 0, 0))
+        if es_config["learn_labels"]:
+            # vmap over images and labels
+            train_and_eval = jax.pmap(train_and_eval, in_axes=(None, 0, 0))
+        else:
+            # vmap over images only
+            train_and_eval = jax.pmap(train_and_eval, in_axes=(None, 0, None))
 
     start = time.time()
     lap_start = start
@@ -584,7 +637,11 @@ def main(config, es_config):
         with jax.disable_jit(config["DEBUG"]):
             shaped_datasets = param_reshaper.reshape(datasets)
 
-            out = train_and_eval(batch_rng, shaped_datasets["states"], shaped_datasets["actions"])
+            
+            if es_config["learn_labels"]:
+                out = train_and_eval(batch_rng, shaped_datasets["states"], shaped_datasets["actions"])
+            else:
+                out = train_and_eval(batch_rng, shaped_datasets["states"], fixed_targets)
 
             returns = out["metrics"]["returned_episode_returns"]  # dim=(popsize, rollouts, num_steps, num_envs)
             ep_lengths = out["metrics"]["returned_episode_lengths"]

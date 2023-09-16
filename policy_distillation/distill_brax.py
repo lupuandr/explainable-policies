@@ -216,7 +216,7 @@ def make_train(config):
                 rng, _rng = jax.random.split(rng)
                 pi = train_state.apply_fn(train_state.params, last_obs)
                 if config["GREEDY_ACT"]:
-                    action = pi.argmax(
+                    action = pi.probs.argmax(
                         axis=-1
                     )  # if 2+ actions are equiprobable, returns first
                 else:
