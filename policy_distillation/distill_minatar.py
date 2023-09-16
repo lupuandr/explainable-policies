@@ -41,7 +41,7 @@ def wrap_minatar_env(env):
     return env
 
 
-class BCAgent(nn.Module):
+class MLP(nn.Module):
     """Network architecture. Matches MinAtar PPO agent from PureJaxRL"""
 
     action_dim: Sequence[int]
@@ -65,9 +65,46 @@ class BCAgent(nn.Module):
         actor_mean = nn.Dense(
             self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
         )(actor_mean)
-#         pi = distrax.Categorical(logits=actor_mean)
+        pi = distrax.Categorical(logits=actor_mean)
 
-        return actor_mean
+        return pi
+
+def default_mlp_init(scale=0.05):
+    return nn.initializers.uniform(scale)
+
+
+class MinAtarCNN(nn.Module):
+    """A general purpose conv net model."""
+
+    action_dim: int
+    activation: str = "relu"
+    hidden_dims: Sequence[int]
+
+    @nn.compact
+    def __call__(self, x: chex.Array) -> chex.Array:
+        if self.activation == "relu":
+            activation = nn.relu
+        else:
+            activation = nn.tanh
+        x = nn.Conv(
+            features=16,
+            kernel_size=(3, 3),
+            padding="SAME",
+            strides=1,
+            bias_init=default_mlp_init(),
+        )(x)
+        x = activation(x)
+        x = x.reshape((x.shape[0], -1))
+        for hidden_dim in self.hidden_dims:
+            x = activation(
+                nn.Dense(
+                    features=hidden_dim,
+                    bias_init=default_mlp_init(),
+                )(x)
+            )
+        x = nn.Dense(features=self.action_dim)(x)
+        pi = distrax.Categorical(logits=x)
+        return pi
 
 
 def softmax(
@@ -115,9 +152,14 @@ def make_train(config):
     def train(synth_data, action_probs, rng):
         """Train using BC on synthetic data with fixed action labels and evaluate on RL environment"""
 
-        network = BCAgent(
-            env.action_space(env_params).n, activation=config["ACTIVATION"], width=config["WIDTH"]
-        )
+        if config["NET"].lower() == "mlp":
+            network = BCAgent(
+                env.action_space(env_params).n, activation=config["ACTIVATION"], width=config["WIDTH"]
+            )
+        elif config["NET"].lower() == "cnn":
+            network = MinAtarCNN( env.action_space(env_params).n, activation=config["ACTIVATION"], hidden_dims=[config["WIDTH"]])
+
+
         rng, _rng = jax.random.split(rng)
         init_x = jnp.zeros(env.observation_space(env_params).shape)
         network_params = network.init(_rng, init_x)
@@ -150,61 +192,19 @@ def make_train(config):
             def _bc_update_step(bc_state, unused):
                 train_state, rng = bc_state
 
-                def _loss_and_acc(params, apply_fn, step_data, y_true, num_classes, grad_rng):
-                    """Compute cross-entropy loss and accuracy.
-                    y_true are action pseudo-probabilites (sum may or may not =1), NOT actions in themselves.
-                    Hence take y_true*pi.log_prob(actions).
-                    """                   
-#                     logits = apply_fn(params, step_data)
-#                     logits = jax.nn.log_softmax(logits, axis=-1) # normalize
-#                     pred_probs = softmax(logits, axis=-1)
-# #                     pi = distrax.Categorical(logits)
-# #                     all_actions = jnp.arange(num_classes)
-# #                     y_pred = pi.sample(seed=grad_rng)
-# #                     y_pred = jax.nn.one_hot(y_pred, num_classes)
-# #                     acc = jnp.mean( jnp.sum(jnp.abs(y_pred - y_true), axis=1) / 2 )
+                batched_predict = jax.vmap(train_state.apply_fn, in_axes=(None, 0))
 
-#                     # Cosine similarity
-#                     norm_constant = jnp.linalg.norm(pred_probs, axis=-1, keepdims=True) * jnp.linalg.norm(y_true, axis=-1, keepdims=True)
-#                     acc = jnp.mean(pred_probs*y_true / norm_constant)
-#                     negative_log_probs = -logits
-#                     # NOTE: y_true is not normalized and so may not sum to 1. For now, assume that's fine
-#                     loss = jnp.sum(y_true * negative_log_probs) # L_XENT = Sum_s Sum_a [-p(a|s)log q(a|s)]
-#                     loss /= y_true.shape[0]         # Mean over dataset size
+                def _loss_and_acc(params, step_data, y_true, num_classes):
+                    """Compute cross-entropy loss and accuracy."""
+                    targets = jax.nn.one_hot(y_true, num_classes)
+                    preds = batched_predict(params, step_data)
+                    loss = -jnp.mean(preds.logits.reshape(targets.shape) * targets)
 
-                    logits = apply_fn(params, step_data)
-    
-                    # MSE loss
-                    loss = jnp.mean((logits.squeeze() - y_true)**2)
-    
-                    # Compute softmax to get probabilities
-#                     softmax_probs = softmax(logits)
-
-                    # Compute log probabilities
-#                     log_probs = jnp.log(softmax_probs + 1e-10)
-
-                    # Compute the cross-entropy loss
-#                     loss = -jnp.sum(softmax(y_true) * log_probs) / step_data.shape[0]
-#                     loss = -jnp.sum(y_true * log_probs) / step_data.shape[0]
-
-                    # Compute the accuracy (this part is optional and depends on what you specifically need)
-                    pred_class = jnp.argmax(logits, axis=-1)
-                    true_class = jnp.argmax(y_true, axis=-1)
-                    acc = jnp.mean(pred_class == true_class)
-                    
-#                     breakpoint()
+                    # Reshaping accounts for CNN having an extra batched dimension, which otherwise messes broadcasting
+                    pred_probs = preds.probs.reshape(preds.probs.shape[0], -1)
+                    acc = jnp.mean(jnp.argmax(pred_probs, axis=1) == jnp.argmax(targets, axis=1))
 
                     return loss, acc
-                
-#                 def _loss_and_acc(params, apply_fn, step_data, y_true, num_classes, grad_rng):
-#                     """Compute cross-entropy loss and accuracy."""
-#                     logits = apply_fn(params, step_data)
-                    
-#                     loss = -jnp.sum(y_true * jax.nn.log_softmax(logits))
-#                     loss /= y_true.shape[0]
-                    
-#                     acc = jnp.mean(jnp.argmax(logits, axis=-1) == y_true)
-#                     return loss, acc
 
                 grad_fn = jax.value_and_grad(_loss_and_acc, has_aux=True)
 
@@ -225,11 +225,9 @@ def make_train(config):
 
                 loss_and_acc, grads = grad_fn(
                     train_state.params,
-                    train_state.apply_fn,
                     step_data,
                     y_true,
                     env.action_space(env_params).n,
-                    grad_rng
                 )
                 train_state = train_state.apply_gradients(grads=grads)
                 bc_state = (train_state, rng)
@@ -350,7 +348,7 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--env",
         type=str,
-        help="Gymnax environment name",
+        help="Gymnax environment name: Pong-misc, [Breakout/SpaceInvaders/Freeway/Asterix]-MinAtar",
         default="SpaceInvaders-MinAtar"
     )
     parser.add_argument(
@@ -369,7 +367,7 @@ def parse_arguments(argstring=None):
         "--generations",
         type=int,
         help="Number of ES generations",
-        default=200
+        default=1000
     )
     parser.add_argument(
         "--rollouts",
@@ -391,6 +389,12 @@ def parse_arguments(argstring=None):
     )
 
     # Inner loop args
+    parser.add_argument(
+        "--net",
+        type=str,
+        help="MLP / CNN",
+        default="mlp"
+    )
     parser.add_argument(
         "--epochs",
         type=int,
@@ -480,6 +484,7 @@ def parse_arguments(argstring=None):
 
 def make_configs(args):
     config = {
+        "NET": args.net,
         "LR": args.lr,  # 3e-4 for Brax?
         "NUM_ENVS": args.eval_envs,  # 8 # Num eval envs for each BC policy
         "NUM_STEPS": 1024,  # 128 # Max num eval steps per env
