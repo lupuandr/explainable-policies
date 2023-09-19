@@ -117,19 +117,19 @@ class MinAtarCNN(nn.Module):
         return pi
 
 
-def softmax(
-    x,
-    axis: Optional[Union[int, Tuple[int, ...]]] = -1,
-    where: Optional[Array] = None,
-    initial: Optional[Array] = None) -> Array:
-    """Custom softmax method, required because jax.nn.softmax throws a weird error due to a decorator"""
-    
-    x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
-    unnormalized = jnp.exp(x - x_max)
-    result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
-    if where is not None:
-        result = jnp.where(where, result, 0)
-    return result
+# def softmax(
+#     x,
+#     axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+#     where: Optional[Array] = None,
+#     initial: Optional[Array] = None) -> Array:
+#     """Custom softmax method, required because jax.nn.softmax throws a weird error due to a decorator"""
+#
+#     x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
+#     unnormalized = jnp.exp(x - x_max)
+#     result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+#     if where is not None:
+#         result = jnp.where(where, result, 0)
+#     return result
 
 
 class Transition(NamedTuple):
@@ -183,7 +183,7 @@ def make_train(config):
                 env.action_space(env_params).n, activation=config["ACTIVATION"], hidden_dims=[config["WIDTH"]]
             )
 
-        if not config["DO_OVERFITTING"]:
+        if not config["OVERFIT"]:
             rng, _rng = jax.random.split(rng)
             init_x = jnp.zeros((1, *env.observation_space(env_params).shape))
             network_params = network.init(_rng, init_x)
@@ -467,7 +467,7 @@ def parse_arguments(argstring=None):
         default=False
     )
     parser.add_argument(
-        "--es-strategy",
+        "--es_strategy",
         type=str,
         help="Type of es strategy. Have OpenES and SNES",
         default="OpenES",
@@ -537,17 +537,17 @@ def parse_arguments(argstring=None):
         default=False
     )
     parser.add_argument(
-        "--num-steps",
+        "--num_steps",
         type=int,
         default=1024,
     )
     parser.add_argument(
-        "--overfit-seed",
+        "--overfit_seed",
         type=int,
         default=0
     )
     parser.add_argument(
-        "--do-overfitting",
+        "--overfit",
         action="store_true",
         default=False,
     )
@@ -609,7 +609,7 @@ def make_configs(args):
         "DEBUG": args.debug,
         "SEED": args.seed,
         "FOLDER": args.folder,
-        "DO_OVERFITTING": args.do_overfitting,
+        "OVERFIT": args.overfit,
         "OVERFIT_SEED": args.overfit_seed,
     }
     es_config = {
@@ -638,8 +638,8 @@ def main(config, es_config):
         print(f"{k} : {v},")
 
     if args.const_normalize_obs:
-        config["OBS_MEAN"] = jnp.load(f"/home/clu/normalize_params/mean_{args.env}.npy")
-        config["OBS_VAR"] = jnp.load(f"/home/clu/normalize_params/var_{args.env}.npy")
+        config["OBS_MEAN"] = jnp.load(f"../normalize_params/mean_{args.env}.npy")
+        config["OBS_VAR"] = jnp.load(f"../normalize_params/var_{args.env}.npy")
     print("-----------------------------")
     print("ES_CONFIG")
     for k, v in es_config.items():
