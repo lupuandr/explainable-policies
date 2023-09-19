@@ -11,14 +11,17 @@ import distrax
 import gymnax
 from gymnax.environments import environment, spaces
 from gymnax.wrappers.purerl import GymnaxWrapper
+import brax
 from brax import envs
-from brax.envs.wrappers.training import EpisodeWrapper, AutoResetWrapper
+# from brax.envs.wrappers.training import EpisodeWrapper, AutoResetWrapper
+from brax.envs.wrapper import EpisodeWrapper, AutoResetWrapper
 from evosax import OpenES, ParameterReshaper
 
 import wandb
 
 import sys
-sys.path.insert(0, '..')
+# sys.path.insert(0, '..')
+sys.path.insert(0, '/home/clu/explainable-policies')
 from purejaxrl.wrappers import (
     LogWrapper,
     BraxGymnaxWrapper,
@@ -26,6 +29,7 @@ from purejaxrl.wrappers import (
     NormalizeVecObservation,
     NormalizeVecReward,
     ClipAction,
+    TransformObservation,
 )
 import time
 import argparse
@@ -93,8 +97,11 @@ def make_train(config):
     env, env_params = BraxGymnaxWrapper(config["ENV_NAME"]), None
     env = LogWrapper(env)
     env = ClipAction(env)
+    if config["CONST_NORMALIZE_OBS"]:
+        func = lambda x: (x - config["OBS_MEAN"]) / jnp.sqrt(config["OBS_VAR"] + 1e-8)
+        env = TransformObservation(env, func)
     env = VecEnv(env)
-    if config["NORMALIZE_OBS"]:
+    if config["NORMALIZE_OBS"] and not config["CONST_NORMALIZE_OBS"]:
         env = NormalizeVecObservation(env)
     if config["NORMALIZE_REWARD"]:
         env = NormalizeVecReward(env, config["GAMMA"])
@@ -381,9 +388,14 @@ def parse_arguments(argstring=None):
         default=0.0
     )
     parser.add_argument(
+        "--const_normalize_obs",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
         "--normalize_obs",
         type=int,
-        default=1
+        default=0
     )
     parser.add_argument(
         "--normalize_reward",
@@ -441,6 +453,7 @@ def make_configs(args):
         "DATA_NOISE": args.data_noise, # Add noise to data during BC training
         "ENV_PARAMS": {},
         "GAMMA": 0.99,
+        "CONST_NORMALIZE_OBS": bool(args.const_normalize_obs),
         "NORMALIZE_OBS": bool(args.normalize_obs),
         "NORMALIZE_REWARD": bool(args.normalize_reward),
         "DEBUG": args.debug,
@@ -465,6 +478,10 @@ def main(config, es_config):
     print("-----------------------------")
     for k, v in config.items():
         print(f"{k} : {v},")
+    if args.const_normalize_obs:
+        config["OBS_MEAN"] = jnp.load(f"/home/clu/normalize_params/mean_{args.env}.npy")
+        config["OBS_VAR"] = jnp.load(f"/home/clu/normalize_params/var_{args.env}.npy")
+
     print("-----------------------------")
     print("ES_CONFIG")
     for k, v in es_config.items():
@@ -537,8 +554,9 @@ def main(config, es_config):
             mean_ep_length = mean_ep_length.flatten()
 
             # Division by zero, watch out
-            fitness = (returns * dones).sum(axis=(-1, -2, -3)) / dones.sum(
-                axis=(-1, -2, -3))  # fitness, dim = (popsize)
+            # fitness = (returns * dones).sum(axis=(-1, -2, -3)) / dones.sum(
+            #     axis=(-1, -2, -3))  # fitness, dim = (popsize)
+            fitness = out["metrics"]["returned_episode_returns"][:, :, -1, :].mean(axis=(-1, -2))
             fitness = fitness.flatten()  # Necessary if pmap-ing to 2+ devices
         #         fitness = jnp.minimum(fitness, fitness.mean()+40)
 
@@ -610,4 +628,3 @@ if __name__ == "__main__":
     args = parse_arguments()
     config, es_config = make_configs(args)
     main(config, es_config)
-

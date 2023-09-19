@@ -115,8 +115,8 @@ class LogWrapper(GymnaxWrapper):
 class BraxGymnaxWrapper:
     def __init__(self, env_name, backend="positional"):
         env = envs.get_environment(env_name=env_name, backend=backend)
-        env = envs.wrappers.training.EpisodeWrapper(env, episode_length=1000, action_repeat=1)
-        env = envs.wrappers.training.AutoResetWrapper(env)
+        env = envs.wrapper.EpisodeWrapper(env, episode_length=1000, action_repeat=1)
+        env = envs.wrapper.AutoResetWrapper(env)
         self._env = env
         self.action_size = env.action_size
         self.observation_size = (env.observation_size,)

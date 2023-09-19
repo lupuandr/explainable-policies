@@ -12,21 +12,23 @@ import gymnax
 from gymnax.environments import environment, spaces
 from gymnax.wrappers.purerl import GymnaxWrapper
 from evosax import OpenES, ParameterReshaper
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, Tuple
 Array = Any
 import chex
 
 import wandb
 
 import sys
-sys.path.insert(0, '..')
+# sys.path.insert(0, '..')
+sys.path.insert(0, '/home/clu/explainable-policies')
 from purejaxrl.wrappers import (
     LogWrapper,
     VecEnv,
     FlattenObservationWrapper,
     # ClipAction,
-    # NormalizeVecObservation,
-    # NormalizeVecReward,
+    NormalizeVecObservation,
+    NormalizeVecReward,
+    TransformObservation,
 )
 import time
 import argparse
@@ -34,11 +36,18 @@ import pickle as pkl
 import os
 
 
-def wrap_minatar_env(env):
+def wrap_minatar_env(env, normalize_obs=False, normalize_reward=False, gamma=0.99):
     """Apply standard set of Brax wrappers"""
-    env = FlattenObservationWrapper(env)
-    env = LogWrapper(env)
-    env = VecEnv(env)
+    if config["NET"].lower() == "mlp":
+        env = FlattenObservationWrapper(env)
+        env = LogWrapper(env)
+        env = VecEnv(env)
+        if normalize_obs:
+            env = NormalizeVecObservation(env)
+        if normalize_reward:
+            env = NormalizeVecReward(env, gamma)
+    else:
+        print("Chris is lazy and this is just used for shapes")
     return env
 
 
@@ -110,7 +119,7 @@ class MinAtarCNN(nn.Module):
 
 def softmax(
     x,
-    axis: Optional[Union[int, tuple[int, ...]]] = -1,
+    axis: Optional[Union[int, Tuple[int, ...]]] = -1,
     where: Optional[Array] = None,
     initial: Optional[Array] = None) -> Array:
     """Custom softmax method, required because jax.nn.softmax throws a weird error due to a decorator"""
@@ -141,9 +150,21 @@ def make_train(config):
     config["NUM_UPDATES"] = config["UPDATE_EPOCHS"]
 
     env, env_params = gymnax.make(config["ENV_NAME"])
-    env = FlattenObservationWrapper(env)
-    env = LogWrapper(env)
-    env = VecEnv(env)
+    if config["NET"].lower() == "mlp":
+        env = FlattenObservationWrapper(env)
+        env = LogWrapper(env)
+        env = VecEnv(env)
+        if config["CONST_NORMALIZE_OBS"]:
+            func = lambda x: (x - config["OBS_MEAN"]) / jnp.sqrt(config["OBS_VAR"] + 1e-8)
+            env = TransformObservation(env, func)
+    else:
+        config["OBS_MEAN"] = config["OBS_MEAN"].reshape((10, 10, -1))
+        config["OBS_VAR"] = config["OBS_VAR"].reshape((10, 10, -1))
+        env = LogWrapper(env)
+        env = VecEnv(env)
+        if config["CONST_NORMALIZE_OBS"]:
+            func = lambda x: (x - config["OBS_MEAN"]) / jnp.sqrt(config["OBS_VAR"] + 1e-8)
+            env = TransformObservation(env, func)
 
     # Do I need a schedule on the LR for BC?
     def linear_schedule(count):
@@ -164,9 +185,7 @@ def make_train(config):
 
         rng, _rng = jax.random.split(rng)
         
-        # TODO: reshape to [1, *input_dim] for CNN. This also implies reshaping env observations and datasets.
-        # Alternatively, have the reshaping be done inside the network. I think that should work.
-        init_x = jnp.zeros(env.observation_space(env_params).shape)
+        init_x = jnp.zeros((1, *env.observation_space(env_params).shape))
         network_params = network.init(_rng, init_x)
 
         assert (
@@ -197,11 +216,9 @@ def make_train(config):
             def _bc_update_step(bc_state, unused):
                 train_state, rng = bc_state
 
-                batched_predict = jax.vmap(train_state.apply_fn, in_axes=(None, 0))
-
                 def _loss_and_acc(params, step_data, targets):
                     """Compute cross-entropy loss and accuracy."""
-                    preds = batched_predict(params, step_data)
+                    preds = train_state.apply_fn(params, step_data)
                     loss = -jnp.mean(preds.logits.reshape(targets.shape) * targets)
 
                     # Reshaping accounts for CNN having an extra batched dimension, which otherwise messes broadcasting
@@ -470,6 +487,11 @@ def parse_arguments(argstring=None):
         default=0.0
     )
     parser.add_argument(
+        "--const_normalize_obs",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
         "--normalize_obs",
         type=int,
         default=0
@@ -509,6 +531,11 @@ def parse_arguments(argstring=None):
         action="store_true",
         default=False
     )
+    parser.add_argument(
+        "--num-steps",
+        type=int,
+        default=1024,
+    )
     if argstring is not None:
         args = parser.parse_args(argstring.split())
     else:
@@ -525,7 +552,7 @@ def make_configs(args):
         "NET": args.net,
         "LR": args.lr,  # 3e-4 for Brax?
         "NUM_ENVS": args.eval_envs,  # 8 # Num eval envs for each BC policy
-        "NUM_STEPS": 1024,  # 128 # Max num eval steps per env
+        "NUM_STEPS": args.num_steps,  # 128 # Max num eval steps per env
         "UPDATE_EPOCHS": args.epochs,  # Num BC gradient steps
         "MAX_GRAD_NORM": 0.5,
         "ACTIVATION": args.activation,
@@ -536,6 +563,7 @@ def make_configs(args):
         "DATA_NOISE": args.data_noise, # Add noise to data during BC training
         "ENV_PARAMS": {},
         "GAMMA": 0.99,
+        "CONST_NORMALIZE_OBS": bool(args.const_normalize_obs),
         "NORMALIZE_OBS": bool(args.normalize_obs),
         "NORMALIZE_REWARD": bool(args.normalize_reward),
         "DEBUG": args.debug,
@@ -564,6 +592,10 @@ def main(config, es_config):
     print("-----------------------------")
     for k, v in config.items():
         print(f"{k} : {v},")
+
+    if args.const_normalize_obs:
+        config["OBS_MEAN"] = jnp.load(f"/home/clu/normalize_params/mean_{args.env}.npy")
+        config["OBS_VAR"] = jnp.load(f"/home/clu/normalize_params/var_{args.env}.npy")
     print("-----------------------------")
     print("ES_CONFIG")
     for k, v in es_config.items():
@@ -639,6 +671,7 @@ def main(config, es_config):
 
             
             if es_config["learn_labels"]:
+                shaped_datasets["actions"] = jax.nn.softmax(shaped_datasets["actions"], axis=-1)
                 out = train_and_eval(batch_rng, shaped_datasets["states"], shaped_datasets["actions"])
             else:
                 out = train_and_eval(batch_rng, shaped_datasets["states"], fixed_targets)
@@ -652,8 +685,9 @@ def main(config, es_config):
             mean_ep_length = mean_ep_length.flatten()
 
             # Division by zero, watch out
-            fitness = (returns * dones).sum(axis=(-1, -2, -3)) / dones.sum(
-                axis=(-1, -2, -3))  # fitness, dim = (popsize)
+            # fitness = (returns * dones).sum(axis=(-1, -2, -3)) / dones.sum(
+            #     axis=(-1, -2, -3))  # fitness, dim = (popsize)
+            fitness = out["metrics"]["returned_episode_returns"][:, :, -1, :].mean(axis=(-1, -2))
             fitness = fitness.flatten()  # Necessary if pmap-ing to 2+ devices
         #         fitness = jnp.minimum(fitness, fitness.mean()+40)
 
