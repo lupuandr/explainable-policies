@@ -20,8 +20,8 @@ from evosax import OpenES, ParameterReshaper
 import wandb
 
 import sys
-# sys.path.insert(0, '..')
-sys.path.insert(0, '/home/clu/explainable-policies')
+sys.path.insert(0, '..')
+# sys.path.insert(0, '/home/clu/explainable-policies')
 from purejaxrl.wrappers import (
     LogWrapper,
     BraxGymnaxWrapper,
