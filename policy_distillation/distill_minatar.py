@@ -183,7 +183,7 @@ def make_train(config):
                 env.action_space(env_params).n, activation=config["ACTIVATION"], hidden_dims=[config["WIDTH"]]
             )
 
-        if config["OVERFIT_SEED"] == 0:
+        if not config["DO_OVERFITTING"]:
             rng, _rng = jax.random.split(rng)
             init_x = jnp.zeros((1, *env.observation_space(env_params).shape))
             network_params = network.init(_rng, init_x)
@@ -546,6 +546,11 @@ def parse_arguments(argstring=None):
         type=int,
         default=0
     )
+    parser.add_argument(
+        "--do-overfitting",
+        action="store_true",
+        default=False,
+    )
 
     # Misc. args
     parser.add_argument(
@@ -604,6 +609,7 @@ def make_configs(args):
         "DEBUG": args.debug,
         "SEED": args.seed,
         "FOLDER": args.folder,
+        "DO_OVERFITTING": args.do_overfitting,
         "OVERFIT_SEED": args.overfit_seed,
     }
     es_config = {
