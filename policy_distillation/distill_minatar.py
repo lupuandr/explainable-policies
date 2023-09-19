@@ -11,7 +11,7 @@ import distrax
 import gymnax
 from gymnax.environments import environment, spaces
 from gymnax.wrappers.purerl import GymnaxWrapper
-from evosax import OpenES, ParameterReshaper
+from evosax import OpenES, ParameterReshaper, SNES
 from typing import Any, Optional, Union, Tuple
 Array = Any
 import chex
@@ -183,10 +183,15 @@ def make_train(config):
                 env.action_space(env_params).n, activation=config["ACTIVATION"], hidden_dims=[config["WIDTH"]]
             )
 
-        rng, _rng = jax.random.split(rng)
-        
-        init_x = jnp.zeros((1, *env.observation_space(env_params).shape))
-        network_params = network.init(_rng, init_x)
+        if config["OVERFIT_SEED"] == 0:
+            rng, _rng = jax.random.split(rng)
+            init_x = jnp.zeros((1, *env.observation_space(env_params).shape))
+            network_params = network.init(_rng, init_x)
+        else:
+            print(f"OVERFIT SEED {config['OVERFIT_SEED']}")
+            _rng = jax.random.PRNGKey(config["OVERFIT_SEED"])
+            init_x = jnp.zeros((1, *env.observation_space(env_params).shape))
+            network_params = network.init(_rng, init_x)
 
         assert (
                 synth_data[0].shape == env.observation_space(env_params).shape
@@ -354,18 +359,31 @@ def init_params(env, env_params, es_config):
 
 def init_es(rng_init, param_reshaper, es_config):
     """Initialize OpenES strategy"""
-    strategy = OpenES(
-        popsize=es_config["popsize"],
-        num_dims=param_reshaper.total_params,
-        opt_name="adam",
-        maximize=True,         # Maximize=False because the fitness is the train loss
-        lrate_init=es_config["lrate_init"],  # Passing it here since for some reason cannot update it in params.replace
-        lrate_decay=es_config["lrate_decay"]
-    )
+    if es_config["strategy"] == "OpenES":
+        strategy = OpenES(
+            popsize=es_config["popsize"],
+            num_dims=param_reshaper.total_params,
+            opt_name="adam",
+            maximize=True,         # Maximize=False because the fitness is the train loss
+            lrate_init=es_config["lrate_init"],  # Passing it here since for some reason cannot update it in params.replace
+            lrate_decay=es_config["lrate_decay"]
+        )
 
-    es_params = strategy.params_strategy
-    es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_limit=es_config["sigma_limit"], sigma_decay=es_config["sigma_decay"])
-    state = strategy.initialize(rng_init, es_params)
+        es_params = strategy.params_strategy
+        es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_limit=es_config["sigma_limit"], sigma_decay=es_config["sigma_decay"])
+        state = strategy.initialize(rng_init, es_params)
+    elif es_config["strategy"] == "SNES":
+        strategy = SNES(
+            popsize=es_config["popsize"],
+            num_dims=param_reshaper.total_params,
+            maximize=True,         # Maximize=False because the fitness is the train loss
+        )
+
+        es_params = strategy.params_strategy
+        es_params = es_params.replace(sigma_init=es_config["sigma_init"], temperature=es_config["temperature"])
+        state = strategy.initialize(rng_init, es_params)
+    else:
+        raise NotImplementedError
 
     return strategy, es_params, state
 
@@ -425,6 +443,12 @@ def parse_arguments(argstring=None):
         default=1.0
     )
     parser.add_argument(
+        "--temperature",
+        type=float,
+        help="SNES temperature",
+        default=30.0
+    )
+    parser.add_argument(
         "--lrate_init",
         type=float,
         help="ES initial lrate",
@@ -441,6 +465,12 @@ def parse_arguments(argstring=None):
         action="store_true",
         help="Whether to evolve labels (if False, fix labels to one-hots)",
         default=False
+    )
+    parser.add_argument(
+        "--es-strategy",
+        type=str,
+        help="Type of es strategy. Have OpenES and SNES",
+        default="OpenES",
     )
 
     # Inner loop args
@@ -506,6 +536,16 @@ def parse_arguments(argstring=None):
         action="store_true",
         default=False
     )
+    parser.add_argument(
+        "--num-steps",
+        type=int,
+        default=1024,
+    )
+    parser.add_argument(
+        "--overfit-seed",
+        type=int,
+        default=0
+    )
 
     # Misc. args
     parser.add_argument(
@@ -530,11 +570,6 @@ def parse_arguments(argstring=None):
         "--debug",
         action="store_true",
         default=False
-    )
-    parser.add_argument(
-        "--num-steps",
-        type=int,
-        default=1024,
     )
     if argstring is not None:
         args = parser.parse_args(argstring.split())
@@ -569,6 +604,7 @@ def make_configs(args):
         "DEBUG": args.debug,
         "SEED": args.seed,
         "FOLDER": args.folder,
+        "OVERFIT_SEED": args.overfit_seed,
     }
     es_config = {
         "popsize": args.popsize,  # Num of candidates (variations) generated every generation
@@ -582,6 +618,8 @@ def make_configs(args):
         "lrate_init": args.lrate_init,
         "lrate_decay": args.lrate_decay,
         "learn_labels": args.learn_labels,
+        "strategy": args.es_strategy,
+        "temperature": args.temperature,
     }
     return config, es_config
 
