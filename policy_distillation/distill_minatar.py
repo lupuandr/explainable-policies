@@ -36,7 +36,7 @@ import pickle as pkl
 import os
 
 
-def wrap_minatar_env(env, normalize_obs=False, normalize_reward=False, gamma=0.99):
+def wrap_minatar_env(env, config, normalize_obs=False, normalize_reward=False, gamma=0.99):
     """Apply standard set of Brax wrappers"""
     if config["NET"].lower() == "mlp":
         env = FlattenObservationWrapper(env)
@@ -180,7 +180,7 @@ def make_train(config):
             )
         elif config["NET"].lower() == "cnn":
             network = MinAtarCNN(
-                env.action_space(env_params).n, activation=config["ACTIVATION"], hidden_dims=[config["WIDTH"]]
+                env.action_space(env_params).n, activation=config["ACTIVATION"], hidden_dims=[config["WIDTH"]]*config["FFWD_LAYERS"]
             )
 
         if not config["OVERFIT"]:
@@ -200,12 +200,12 @@ def make_train(config):
         # Setup optimizer
         if config["ANNEAL_LR"]:
             tx = optax.chain(
-                optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
+#                 optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
                 optax.adam(learning_rate=linear_schedule, eps=1e-5),
             )
         else:
             tx = optax.chain(
-                optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
+#                 optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
                 optax.adam(config["LR"], eps=1e-5),
             )
 
@@ -330,7 +330,7 @@ def make_train(config):
 def init_env(config):
     """Initialize environment"""
     env, env_params = gymnax.make(config["ENV_NAME"])
-    env = wrap_minatar_env(env)
+    env = wrap_minatar_env(env, config)
     return env, env_params
 
 
@@ -505,6 +505,12 @@ def parse_arguments(argstring=None):
         default=64
     )
     parser.add_argument(
+        "--ffwd_layers",
+        type=int,
+        help="CNN number of ffwd layers",
+        default=2
+    )
+    parser.add_argument(
         "--lr",
         type=float,
         help="NN learning rate",
@@ -597,6 +603,7 @@ def make_configs(args):
         "MAX_GRAD_NORM": 0.5,
         "ACTIVATION": args.activation,
         "WIDTH": args.width,
+        "FFWD_LAYERS": args.ffwd_layers,
         "ENV_NAME": args.env,
         "ANNEAL_LR": True,  # False for Brax?
         "GREEDY_ACT": args.greedy_act,  # Whether to use greedy act in env or sample
@@ -636,10 +643,6 @@ def main(config, es_config):
     print("-----------------------------")
     for k, v in config.items():
         print(f"{k} : {v},")
-
-    if args.const_normalize_obs:
-        config["OBS_MEAN"] = jnp.load(f"../normalize_params/mean_{args.env}.npy")
-        config["OBS_VAR"] = jnp.load(f"../normalize_params/var_{args.env}.npy")
     print("-----------------------------")
     print("ES_CONFIG")
     for k, v in es_config.items():
@@ -654,6 +657,11 @@ def main(config, es_config):
         wandb.summary["D"] = es_config["dataset_size"]
         #     wandb.define_metric("mean_fitness", summary="last")
         #     wandb.define_metric("max_fitness", summary="last")
+        
+    # Load here so that OBS_MEAN and OBS_VAR are not logged to wandb, since they are massive arrays
+    if config["CONST_NORMALIZE_OBS"]:
+        config["OBS_MEAN"] = jnp.load(f"../normalize_params/mean_{config['ENV_NAME']}.npy")
+        config["OBS_VAR"] = jnp.load(f"../normalize_params/var_{config['ENV_NAME']}.npy")
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)

@@ -27,15 +27,15 @@ executor.update_parameters(
 jobs = []
 with executor.batch():
     job_idx = 0
-    for D in [4, 16, 64]:
+    for D in [4]:#, 16, 64]:
         for env in ["SpaceInvaders-MinAtar", "Breakout-MinAtar", "Freeway-MinAtar", "Asterix-MinAtar"]:
-            for epochs in [50, 200, 400]:
+            for epochs in [25, 50]:#, 200, 400]:
                 for seed in [0]:#,1]:
                     for sigma_init in [0.02]:#, 0.01]: #[0.02, 0.01, 0.005, 0.0025]:
                         for sigma_decay in [1.0]:#, 0.999]: #, 0.995]:
-                            for lrate_init in [0.04, 0.01]: #[0.04, 0.02, 0.01, 0.005, 0.0025]: # Outer loop
+                            for lrate_init in [0.01, 0.005]: #[0.04, 0.02, 0.01, 0.005, 0.0025]: # Outer loop
                                 for lrate_decay in [1.0]:#, 0.999]: #, 0.995]: # Outer loop
-                                    for lr in [0.1, 0.05]: #[0.2, 0.1, 0.05, 0.025]: # Inner loop
+                                    for lr in [0.2, 0.1, 0.05]: #[0.2, 0.1, 0.05, 0.025]: # Inner loop
                                             for width in [64, 128]: #, 256]:
                                                 print(env, D, epochs, seed)
                                                 folder = f"/private/home/alupu/explainable-policies/results/minatar/{env}/MLP/D{D}_learn_labels{int(False)}_norm{int(False)}/si{sigma_init}_sd{sigma_decay}_li{lrate_init}_ld{lrate_decay}/lr{lr}_E{epochs}_W{width}/seed{seed}_job_idx{job_idx}/"
@@ -59,7 +59,7 @@ with executor.batch():
                                                     f"--seed {seed} " \
                                                     f"--folder {folder} " \
                                                 
-#                                                 argstring = argstring + "--log_dataset "
+                                                argstring = argstring + "--greedy_act "
 
                                                 if not args.dry:
                                                     job = executor.submit(train_from_arg_string, argstring)
