@@ -12,7 +12,7 @@ import chex
 
 from evosax import OpenES, ParameterReshaper
 from torch.utils import data
-from torchvision.datasets import MNIST, FashionMNIST
+from torchvision.datasets import MNIST, FashionMNIST, CIFAR10
 
 import wandb
 
@@ -150,32 +150,42 @@ class FlattenAndCast(object):
 
 
 class Cast(object):
+    dataset_name: str
+
     def __call__(self, pic):
         """Cast from Pic to Array for CNN use"""
-        # TODO: Make this more general, to work for CIFAR/ImageNet as well
-        return jnp.array(pic, dtype=jnp.float32).reshape(1, 28, 28, 1)
+        if "mnist" in self.dataset_name.lower():
+            # MNIST and FMNIST
+            return jnp.array(pic, dtype=jnp.float32).reshape(1, 28, 28, 1)
+        else:
+            # CIFAR-10 and SVHN
+            return jnp.array(pic, dtype=jnp.float32).reshape(1, 32, 32, 3)
 
 
 def get_data(config):
-    # TODO: Make this work for CIFAR as well
-    datasets_dict = {"MNIST" : (MNIST, len(MNIST.classes)), "FashionMNIST" : (FashionMNIST, len(MNIST.classes))}
+    datasets_dict = {"MNIST" : (MNIST, len(MNIST.classes)), "FashionMNIST" : (FashionMNIST, len(MNIST.classes)), "CIFAR-10" : (CIFAR10, 10)} # Hardcoding for CIFAR since it doesn't have a `classes` attribute
     DATASET, n_targets = datasets_dict[config["DATASET"]]
     dataset_name = config["DATASET"].lower()
 
+    # TODO: check if the transforms actually do anything (i.e. are they even applied)
+    # load train and test datasets
     if config["NET"].lower() == "mlp":
         dataset = DATASET(f'/tmp/{dataset_name}/', download=True, transform=FlattenAndCast())
+        dataset_test = DATASET(f'/tmp/{dataset_name}/', download=True, train=False, transform=FlattenAndCast())
     else:
-        dataset = DATASET(f'/tmp/{dataset_name}/', download=True, transform=Cast())
+        dataset = DATASET(f'/tmp/{dataset_name}/', download=True, transform=Cast(dataset_name))
+        dataset_test = DATASET(f'/tmp/{dataset_name}/', download=True, train=False, transform=Cast(dataset_name))
 
-    # Get the full train dataset (for checking accuracy while training)
-    # TODO: Make shape more general, i.e. for CIFAR
-    train_images = np.array(dataset.data).reshape(len(dataset.data), 1, 28, 28, 1)
+    # Get the datasets as arrays
+    if "mnist" in dataset_name.lower():
+        train_images = np.array(dataset.data).reshape(len(dataset.data), 1, 28, 28, 1)
+        test_images = np.array(dataset_test.data).reshape(len(dataset_test.data), 1, 28, 28, 1)
+    else:
+        train_images = np.array(dataset.data).reshape(len(dataset.data), 1, 32, 32, 3)
+        test_images = np.array(dataset_test.data).reshape(len(dataset_test.data), 1, 32, 32, 3)
+
+    # Get labels as one-hots
     train_labels = jax.nn.one_hot(np.array(dataset.targets), n_targets)
-
-    # Get full test dataset
-    dataset_test = DATASET('/tmp/mnist/', download=True, train=False)
-    test_images = np.array(dataset_test.data.numpy().reshape(len(dataset_test.data), 1, 28, 28, 1),
-                           dtype=np.float32)
     test_labels = jax.nn.one_hot(np.array(dataset_test.targets), n_targets)
 
     if config["NET"].lower() == "mlp":
@@ -389,7 +399,7 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--dataset",
         type=str,
-        help="MNIST/FashionMNIST",
+        help="MNIST/FashionMNIST/CIFAR-10",
         default="MNIST"
     )
     parser.add_argument(
@@ -546,6 +556,9 @@ def parse_arguments(argstring=None):
 
     if args.folder[-1] != "/":
         args.folder = args.folder + "/"
+
+    if args.dataset.lower() == "cifar10":
+        args.dataset = "CIFAR-10"
 
     return args
 
