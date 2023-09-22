@@ -11,10 +11,11 @@ import distrax
 import gymnax
 from gymnax.environments import environment, spaces
 from gymnax.wrappers.purerl import GymnaxWrapper
-from evosax import OpenES, ParameterReshaper, SNES
-from typing import Any, Optional, Union, Tuple
-Array = Any
-import chex
+import brax
+from brax import envs
+from brax.envs.wrappers.training import EpisodeWrapper, AutoResetWrapper
+# from brax.envs.wrapper import EpisodeWrapper, AutoResetWrapper
+from evosax import OpenES, ParameterReshaper
 
 import wandb
 
@@ -23,11 +24,11 @@ sys.path.insert(0, '..')
 # sys.path.insert(0, '/home/clu/explainable-policies')
 from purejaxrl.wrappers import (
     LogWrapper,
+    BraxGymnaxWrapper,
     VecEnv,
-    FlattenObservationWrapper,
-    # ClipAction,
     NormalizeVecObservation,
     NormalizeVecReward,
+    ClipAction,
     TransformObservation,
 )
 import time
@@ -36,27 +37,22 @@ import pickle as pkl
 import os
 
 
-def wrap_minatar_env(env, config, normalize_obs=False, normalize_reward=False, gamma=0.99):
+def wrap_brax_env(env, normalize_obs=True, normalize_reward=True, gamma=0.99):
     """Apply standard set of Brax wrappers"""
-    if config["NET"].lower() == "mlp":
-        env = FlattenObservationWrapper(env)
-        env = LogWrapper(env)
-        env = VecEnv(env)
-        if normalize_obs:
-            env = NormalizeVecObservation(env)
-        if normalize_reward:
-            env = NormalizeVecReward(env, gamma)
-    else:
-        print("Chris is lazy and this is just used for shapes")
+    env = LogWrapper(env)
+    env = ClipAction(env)
+    env = VecEnv(env)
+    if normalize_obs:
+        env = NormalizeVecObservation(env)
+    if normalize_reward:
+        env = NormalizeVecReward(env, gamma)
     return env
 
-
-class BCAgent(nn.Module):
-    """Network architecture. Matches MinAtar PPO agent from PureJaxRL"""
-
+# Continuous action BC agent
+class BCAgentContinuous(nn.Module):
     action_dim: Sequence[int]
     activation: str = "tanh"
-    width: int = 64
+    width: int = 64 #512 for Brax
 
     @nn.compact
     def __call__(self, x):
@@ -75,46 +71,11 @@ class BCAgent(nn.Module):
         actor_mean = nn.Dense(
             self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
         )(actor_mean)
-        pi = distrax.Categorical(logits=actor_mean)
+        actor_logtstd = self.param("log_std", nn.initializers.zeros, (self.action_dim,))
+        pi = distrax.MultivariateNormalDiag(actor_mean, jnp.exp(actor_logtstd))
 
         return pi
 
-def default_mlp_init(scale=0.05):
-    return nn.initializers.uniform(scale)
-
-
-class MinAtarCNN(nn.Module):
-    """A general purpose conv net model."""
-
-    action_dim: int
-    activation: str = "relu"
-    hidden_dims: Sequence[int] = 64
-
-    @nn.compact
-    def __call__(self, x: chex.Array) -> chex.Array:
-        if self.activation == "relu":
-            activation = nn.relu
-        else:
-            activation = nn.tanh
-        x = nn.Conv(
-            features=16,
-            kernel_size=(3, 3),
-            padding="SAME",
-            strides=1,
-            bias_init=default_mlp_init(),
-        )(x)
-        x = activation(x)
-        x = x.reshape((x.shape[0], -1))
-        for hidden_dim in self.hidden_dims:
-            x = activation(
-                nn.Dense(
-                    features=hidden_dim,
-                    bias_init=default_mlp_init(),
-                )(x)
-            )
-        x = nn.Dense(features=self.action_dim)(x)
-        pi = distrax.Categorical(logits=x)
-        return pi
 
 class Transition(NamedTuple):
     done: jnp.ndarray
@@ -132,50 +93,42 @@ def make_train(config):
     - Evaluate the policy in the environment
     """
 
-    env, env_params = gymnax.make(config["ENV_NAME"])
-    if config["NET"].lower() == "mlp":
-        env = FlattenObservationWrapper(env)
-        env = LogWrapper(env)
-        env = VecEnv(env)
-        if config["CONST_NORMALIZE_OBS"]:
-            func = lambda x: (x - config["OBS_MEAN"]) / jnp.sqrt(config["OBS_VAR"] + 1e-8)
-            env = TransformObservation(env, func)
-    else:
-        config["OBS_MEAN"] = config["OBS_MEAN"].reshape((10, 10, -1))
-        config["OBS_VAR"] = config["OBS_VAR"].reshape((10, 10, -1))
-        env = LogWrapper(env)
-        env = VecEnv(env)
-        if config["CONST_NORMALIZE_OBS"]:
-            func = lambda x: (x - config["OBS_MEAN"]) / jnp.sqrt(config["OBS_VAR"] + 1e-8)
-            env = TransformObservation(env, func)
+    env, env_params = BraxGymnaxWrapper(config["ENV_NAME"]), None
+    env = LogWrapper(env)
+    env = ClipAction(env)
+    if config["CONST_NORMALIZE_OBS"]:
+        func = lambda x: (x - config["OBS_MEAN"]) / jnp.sqrt(config["OBS_VAR"] + 1e-8)
+        env = TransformObservation(env, func)
+    env = VecEnv(env)
+    if config["NORMALIZE_OBS"] and not config["CONST_NORMALIZE_OBS"]:
+        env = NormalizeVecObservation(env)
+    if config["NORMALIZE_REWARD"]:
+        env = NormalizeVecReward(env, config["GAMMA"])
 
     def train(params, rng):
 
-        if config["NET"].lower() == "mlp":
-            network = BCAgent(
-                env.action_space(env_params).n, activation=config["ACTIVATION"], width=config["WIDTH"]
-            )
-        elif config["NET"].lower() == "cnn":
-            network = MinAtarCNN(
-                env.action_space(env_params).n, activation=config["ACTIVATION"], hidden_dims=[config["WIDTH"]]*config["FFWD_LAYERS"]
-            )
+        action_shape = env.action_space(env_params).shape[0]
+        network = BCAgentContinuous(
+            action_shape, activation=config["ACTIVATION"], width=config["WIDTH"]
+        )
 
         # Init envs
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
+        #         obsv, env_state = jax.vmap(env.reset, in_axes=(0, None))(reset_rng, env_params)
         obsv, env_state = env.reset(reset_rng, env_params)
 
-        # 1. POLICY EVAL LOOP
+        # 3. POLICY EVAL LOOP
         def _eval_ep(runner_state):
             # Environment stepper
             def _env_step(runner_state, unused):
-                params, env_state, last_obs, rng = runner_state
+                train_state, env_state, last_obs, rng = runner_state
 
                 # Select Action
                 rng, _rng = jax.random.split(rng)
                 pi = network.apply(params, last_obs)
                 if config["GREEDY_ACT"]:
-                    action = pi.probs.argmax(
+                    action = pi.argmax(
                         axis=-1
                     )  # if 2+ actions are equiprobable, returns first
                 else:
@@ -185,11 +138,14 @@ def make_train(config):
                 rng, _rng = jax.random.split(rng)
                 rng_step = jax.random.split(_rng, config["NUM_ENVS"])
 
+                #                 obsv, env_state, reward, done, info = jax.vmap(
+                #                     env.step, in_axes=(0, 0, 0, None)
+                #                 )(rng_step, env_state, action, env_params)
                 obsv, env_state, reward, done, info = env.step(rng_step, env_state, action, env_params)
                 transition = Transition(
                     done, action, -1, reward, pi.log_prob(action), last_obs, info
                 )
-                runner_state = (params, env_state, obsv, rng)
+                runner_state = (train_state, env_state, obsv, rng)
                 return runner_state, transition
 
             runner_state, traj_batch = jax.lax.scan(
@@ -209,21 +165,17 @@ def make_train(config):
 
 def init_env(config):
     """Initialize environment"""
-    env, env_params = gymnax.make(config["ENV_NAME"])
-    env = wrap_minatar_env(env, config)
+    env, env_params = BraxGymnaxWrapper(config["ENV_NAME"]), None
+    env = wrap_brax_env(env, normalize_obs=config["NORMALIZE_OBS"], normalize_reward=config["NORMALIZE_REWARD"])
     return env, env_params
 
 
 def init_params(env, env_params, es_config):
-    """Initialize params to be learned"""
-    if config["NET"].lower() == "mlp":
-        network = BCAgent(
-            env.action_space(env_params).n, activation=config["ACTIVATION"], width=config["WIDTH"]
-        )
-    elif config["NET"].lower() == "cnn":
-        network = MinAtarCNN(
-            env.action_space(env_params).n, activation=config["ACTIVATION"], hidden_dims=[config["WIDTH"]]*config["FFWD_LAYERS"]
-        )
+    """Initialize dataset to be learned"""
+    action_shape = env.action_space(env_params).shape[0]
+    network = BCAgentContinuous(
+        action_shape, activation=config["ACTIVATION"], width=config["WIDTH"]
+    )
 
     rng = jax.random.PRNGKey(0)
     init_x = jnp.zeros((1, *env.observation_space(env_params).shape))
@@ -235,31 +187,18 @@ def init_params(env, env_params, es_config):
 
 def init_es(rng_init, param_reshaper, es_config):
     """Initialize OpenES strategy"""
-    if es_config["strategy"] == "OpenES":
-        strategy = OpenES(
-            popsize=es_config["popsize"],
-            num_dims=param_reshaper.total_params,
-            opt_name="adam",
-            maximize=True,         # Maximize=False because the fitness is the train loss
-            lrate_init=es_config["lrate_init"],  # Passing it here since for some reason cannot update it in params.replace
-            lrate_decay=es_config["lrate_decay"]
-        )
+    strategy = OpenES(
+        popsize=es_config["popsize"],
+        num_dims=param_reshaper.total_params,
+        opt_name="adam",
+        maximize=True,
+    )
+    # Replace state mean with real observations
+    # state = state.replace(mean = sampled_data)
 
-        es_params = strategy.params_strategy
-        es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_limit=es_config["sigma_limit"], sigma_decay=es_config["sigma_decay"])
-        state = strategy.initialize(rng_init, es_params)
-    elif es_config["strategy"] == "SNES":
-        strategy = SNES(
-            popsize=es_config["popsize"],
-            num_dims=param_reshaper.total_params,
-            maximize=True,         # Maximize=False because the fitness is the train loss
-        )
-
-        es_params = strategy.params_strategy
-        es_params = es_params.replace(sigma_init=es_config["sigma_init"], temperature=es_config["temperature"])
-        state = strategy.initialize(rng_init, es_params)
-    else:
-        raise NotImplementedError
+    es_params = strategy.default_params
+    es_params = es_params.replace(sigma_init=es_config["sigma_init"], sigma_decay=es_config["sigma_decay"])
+    state = strategy.initialize(rng_init, es_params)
 
     return strategy, es_params, state
 
@@ -273,26 +212,26 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--env",
         type=str,
-        help="Gymnax environment name: Pong-misc, [Breakout/SpaceInvaders/Freeway/Asterix]-MinAtar",
-        default="SpaceInvaders-MinAtar"
+        help="Brax environment name",
+        default="hopper"
     )
     parser.add_argument(
         "--popsize",
         type=int,
         help="Number of state-action pairs",
-        default=64
+        default=512
     )
     parser.add_argument(
         "--generations",
         type=int,
         help="Number of ES generations",
-        default=1000
+        default=200
     )
     parser.add_argument(
         "--rollouts",
         type=int,
         help="Number of BC policies trained per candidate",
-        default=16
+        default=1
     )
     parser.add_argument(
         "--sigma_init",
@@ -301,49 +240,13 @@ def parse_arguments(argstring=None):
         default=0.03
     )
     parser.add_argument(
-        "--sigma_limit",
-        type=float,
-        help="ES variance lower bound (if decaying)",
-        default=0.01
-    )
-    parser.add_argument(
         "--sigma_decay",
         type=float,
         help="ES variance decay factor",
         default=1.0
     )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        help="SNES temperature",
-        default=30.0
-    )
-    parser.add_argument(
-        "--lrate_init",
-        type=float,
-        help="ES initial lrate",
-        default=0.05
-    )
-    parser.add_argument(
-        "--lrate_decay",
-        type=float,
-        help="ES lrate decay factor",
-        default=1.0
-    )
-    parser.add_argument(
-        "--es_strategy",
-        type=str,
-        help="Type of es strategy. Have OpenES and SNES",
-        default="OpenES",
-    )
 
     # Inner loop args
-    parser.add_argument(
-        "--net",
-        type=str,
-        help="MLP / CNN",
-        default="mlp"
-    )
     parser.add_argument(
         "--eval_envs",
         type=int,
@@ -354,19 +257,13 @@ def parse_arguments(argstring=None):
         "--activation",
         type=str,
         help="NN nonlinearlity type (relu/tanh)",
-        default="relu"
+        default="tanh"
     )
     parser.add_argument(
         "--width",
         type=int,
         help="NN width",
         default=64
-    )
-    parser.add_argument(
-        "--ffwd_layers",
-        type=int,
-        help="CNN number of ffwd layers",
-        default=2
     )
     parser.add_argument(
         "--const_normalize_obs",
@@ -381,17 +278,7 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--normalize_reward",
         type=int,
-        default=0
-    )
-    parser.add_argument(
-        "--greedy_act",
-        action="store_true",
-        default=False
-    )
-    parser.add_argument(
-        "--num_steps",
-        type=int,
-        default=1024,
+        default=1
     )
 
     # Misc. args
@@ -431,14 +318,12 @@ def parse_arguments(argstring=None):
 
 def make_configs(args):
     config = {
-        "NET": args.net,
         "NUM_ENVS": args.eval_envs,  # 8 # Num eval envs for each BC policy
-        "NUM_STEPS": args.num_steps,  # 128 # Max num eval steps per env
+        "NUM_STEPS": 1024,  # 128 # Max num eval steps per env
         "ACTIVATION": args.activation,
         "WIDTH": args.width,
-        "FFWD_LAYERS": args.ffwd_layers,
         "ENV_NAME": args.env,
-        "GREEDY_ACT": args.greedy_act,  # Whether to use greedy act in env or sample
+        "GREEDY_ACT": False,  # Whether to use greedy act in env or sample
         "ENV_PARAMS": {},
         "GAMMA": 0.99,
         "CONST_NORMALIZE_OBS": bool(args.const_normalize_obs),
@@ -454,12 +339,7 @@ def make_configs(args):
         "n_generations": args.generations,
         "log_interval": args.log_interval,
         "sigma_init": args.sigma_init,
-        "sigma_limit": args.sigma_limit,
         "sigma_decay": args.sigma_decay,
-        "lrate_init": args.lrate_init,
-        "lrate_decay": args.lrate_decay,
-        "strategy": args.es_strategy,
-        "temperature": args.temperature,
     }
     return config, es_config
 
@@ -470,6 +350,10 @@ def main(config, es_config):
     print("-----------------------------")
     for k, v in config.items():
         print(f"{k} : {v},")
+    if config["CONST_NORMALIZE_OBS"]:
+        config["OBS_MEAN"] = jnp.load(f"../normalize_params/mean_{config['ENV_NAME']}.npy")
+        config["OBS_VAR"] = jnp.load(f"../normalize_params/var_{config['ENV_NAME']}.npy")
+
     print("-----------------------------")
     print("ES_CONFIG")
     for k, v in es_config.items():
@@ -484,11 +368,6 @@ def main(config, es_config):
         # wandb.summary["D"] = es_config["dataset_size"]
         #     wandb.define_metric("mean_fitness", summary="last")
         #     wandb.define_metric("max_fitness", summary="last")
-        
-    # Load here so that OBS_MEAN and OBS_VAR are not logged to wandb, since they are massive arrays
-    if config["CONST_NORMALIZE_OBS"]:
-        config["OBS_MEAN"] = jnp.load(f"../normalize_params/mean_{config['ENV_NAME']}.npy")
-        config["OBS_VAR"] = jnp.load(f"../normalize_params/var_{config['ENV_NAME']}.npy")
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)
@@ -508,20 +387,10 @@ def main(config, es_config):
         return out
 
     multi_seed_eval = jax.vmap(single_seed_eval, in_axes=(0, None))  # Vectorize over seeds
-    # vmap over images only
     train_and_eval = jax.jit(jax.vmap(multi_seed_eval, in_axes=(None, 0)))  # Vectorize over datasets
-        
-    if not config["DEBUG"]:
-        train_and_eval = jax.jit(train_and_eval)
 
-    # TODO: Refactor to allow for different RNGs for each dataset
     if len(jax.devices()) > 1:
         # If available, distribute over multiple GPUs
-        # if es_config["learn_labels"]:
-        #     # vmap over images and labels
-        #     train_and_eval = jax.pmap(train_and_eval, in_axes=(None, 0, 0))
-        # else:
-            # vmap over images only
         train_and_eval = jax.pmap(train_and_eval, in_axes=(None, 0))
 
     start = time.time()
@@ -539,15 +408,12 @@ def main(config, es_config):
         returns = None
         dones = None
         fitness = None
+        shaped_datasets = None
 
         with jax.disable_jit(config["DEBUG"]):
             params = param_reshaper.reshape(members)
 
-            # if es_config["learn_labels"]:
-            # shaped_datasets["actions"] = jax.nn.softmax(shaped_datasets["actions"], axis=-1)
             out = train_and_eval(batch_rng, params)
-            # else:
-            #     out = train_and_eval(batch_rng, shaped_datasets["states"], fixed_targets)
 
             returns = out["metrics"]["returned_episode_returns"]  # dim=(popsize, rollouts, num_steps, num_envs)
             ep_lengths = out["metrics"]["returned_episode_lengths"]
@@ -572,6 +438,12 @@ def main(config, es_config):
         # Logging
         if gen % es_config["log_interval"] == 0 or gen == 0:
             lap_end = time.time()
+            # if len(jax.devices()) > 1:
+            #     bc_loss = out["metrics"]["bc_loss"][:, :, :, -1]
+            #     bc_acc = out["metrics"]["bc_accuracy"][:, :, :, -1]
+            # else:
+            #     bc_loss = out["metrics"]["bc_loss"][:, :, -1]
+            #     bc_acc = out["metrics"]["bc_accuracy"][:, :, -1]
 
             print(
                 f"Gen: {gen}, Fitness: {fitness.mean():.2f} +/- {fitness.std():.2f}, "
@@ -623,4 +495,3 @@ if __name__ == "__main__":
     args = parse_arguments()
     config, es_config = make_configs(args)
     main(config, es_config)
-
