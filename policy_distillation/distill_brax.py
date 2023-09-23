@@ -436,6 +436,12 @@ def parse_arguments(argstring=None):
         default=1
     )
     parser.add_argument(
+        "--save_interval",
+        type=int,
+        help="Num. generations between data saves",
+        default=10
+    )
+    parser.add_argument(
         "--folder",
         type=str,
         help="Path to save folder",
@@ -497,6 +503,7 @@ def make_configs(args):
         "sigma_init": args.sigma_init,
         "sigma_decay": args.sigma_decay,
         "lrate_init": args.lrate_init,
+        "save_interval": args.save_interval
     }
     return config, es_config
 
@@ -623,6 +630,25 @@ def main(config, es_config):
                     "Gen time": lap_end - lap_start,
                 })
             lap_start = lap_end
+
+        if gen % es_config["save_interval"] == 0 or gen == 0:
+            data = {
+                "state": state,
+                "fitness_over_gen": fitness_over_gen,
+                "max_fitness_over_gen": max_fitness_over_gen,
+                "fitness": fitness,
+                "config": config,
+                "es_config": es_config
+            }
+
+            directory = config["FOLDER"]
+            if not os.path.exists(directory):
+                os.mkdir(directory)
+            filename = directory + f"data_gen{gen}.pkl"
+            file = open(filename, 'wb')
+            pkl.dump(data, file)
+            file.close()
+
     print(f"Total time: {(lap_end - start) / 60:.1f}min")
 
     data = {
@@ -637,7 +663,7 @@ def main(config, es_config):
     directory = config["FOLDER"]
     if not os.path.exists(directory):
         os.mkdir(directory)
-    filename = directory + "data.pkl"
+    filename = directory + "data_final.pkl"
     file = open(filename, 'wb')
     pkl.dump(data, file)
     file.close()

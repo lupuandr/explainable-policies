@@ -542,7 +542,6 @@ def parse_arguments(argstring=None):
         default=False,
     )
 
-
     # Misc. args
     parser.add_argument(
         "--seed",
@@ -555,6 +554,12 @@ def parse_arguments(argstring=None):
         type=int,
         help="Num. generations between logs",
         default=1
+    )
+    parser.add_argument(
+        "--save_interval",
+        type=int,
+        help="Num. generations between data saves",
+        default=10
     )
     parser.add_argument(
         "--log_dataset",
@@ -626,7 +631,8 @@ def make_configs(args):
         "lrate_decay": args.lrate_decay,
         "learn_labels": args.learn_labels,
         "init_mode": args.init_mode,
-        "log_dataset": args.log_dataset
+        "log_dataset": args.log_dataset,
+        "save_interval": args.save_interval
     }
     return config, es_config
 
@@ -661,7 +667,6 @@ def main(config, es_config):
     params, param_reshaper, fixed_targets = init_params(rng_init_params, train_images, train_targets, es_config, n_targets)
     # Fixed targets, used if not targets are not learned
     samples_per_class = es_config["dataset_size"]//n_targets
-
 
     # Initialize OpenES Strategy
     rng, rng_init = jax.random.split(rng)
@@ -727,7 +732,7 @@ def main(config, es_config):
         min_fitness_over_gen.append(fitness.min())
 
         # Logging
-        # TODO: ADD TEST RETURN
+        # TODO: ADD TEST RETURN (not essential since we save data and can do the test eval after the fact)
         if gen % es_config["log_interval"] == 0 or gen == 0:
             lap_end = time.time()
             if len(jax.devices()) > 1:
@@ -787,13 +792,31 @@ def main(config, es_config):
                 wandb.log(log_dict)
 
             lap_start = lap_end
-    print(f"Total time: {(lap_end - start) / 60:.1f}min")
 
+        if gen % es_config["save_interval"] == 0 or gen == 0:
+            data = {
+                "state": state,
+                "fitness_over_gen": fitness_over_gen,
+                "max_fitness_over_gen": max_fitness_over_gen,
+                "fitness": fitness,
+                "config": config,
+                "es_config": es_config
+            }
+
+            directory = config["FOLDER"]
+            if not os.path.exists(directory):
+                os.mkdir(directory)
+            filename = directory + f"data_gen{gen}.pkl"
+            file = open(filename, 'wb')
+            pkl.dump(data, file)
+            file.close()
+
+    print(f"Total time: {(lap_end - start) / 60:.1f}min")
 
     data = {
         "state": state,
         "fitness_over_gen": fitness_over_gen,
-        "min_fitness_over_gen": min_fitness_over_gen,
+        "max_fitness_over_gen": max_fitness_over_gen,
         "fitness": fitness,
         "config": config,
         "es_config": es_config
@@ -802,7 +825,7 @@ def main(config, es_config):
     directory = config["FOLDER"]
     if not os.path.exists(directory):
         os.mkdir(directory)
-    filename = directory + "data.pkl"
+    filename = directory + "data_final.pkl"
     file = open(filename, 'wb')
     pkl.dump(data, file)
     file.close()
