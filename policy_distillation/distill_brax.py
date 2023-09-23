@@ -49,7 +49,7 @@ def wrap_brax_env(env, normalize_obs=True, normalize_reward=True, gamma=0.99):
 class BCAgentContinuous(nn.Module):
     action_dim: Sequence[int]
     activation: str = "tanh"
-    width: int = 64 #512 for Brax
+    width: int = 512
 
     @nn.compact
     def __call__(self, x):
@@ -320,19 +320,19 @@ def parse_arguments(argstring=None):
         "--dataset_size",
         type=int,
         help="Number of state-action pairs",
-        default=4,
+        default=64,
     )
     parser.add_argument(
         "--popsize",
         type=int,
         help="Number of state-action pairs",
-        default=512
+        default=2048
     )
     parser.add_argument(
         "--generations",
         type=int,
         help="Number of ES generations",
-        default=200
+        default=2000
     )
     parser.add_argument(
         "--rollouts",
@@ -364,13 +364,13 @@ def parse_arguments(argstring=None):
         "--epochs",
         type=int,
         help="Number of BC epochs in the inner loop",
-        default=20
+        default=400
     )
     parser.add_argument(
         "--eval_envs",
         type=int,
         help="Number of evaluation environments",
-        default=16
+        default=4
     )
     parser.add_argument(
         "--activation",
@@ -382,7 +382,7 @@ def parse_arguments(argstring=None):
         "--width",
         type=int,
         help="NN width",
-        default=64
+        default=512
     )
     parser.add_argument(
         "--lr",
