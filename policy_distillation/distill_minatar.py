@@ -117,21 +117,6 @@ class MinAtarCNN(nn.Module):
         return pi
 
 
-# def softmax(
-#     x,
-#     axis: Optional[Union[int, Tuple[int, ...]]] = -1,
-#     where: Optional[Array] = None,
-#     initial: Optional[Array] = None) -> Array:
-#     """Custom softmax method, required because jax.nn.softmax throws a weird error due to a decorator"""
-#
-#     x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
-#     unnormalized = jnp.exp(x - x_max)
-#     result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
-#     if where is not None:
-#         result = jnp.where(where, result, 0)
-#     return result
-
-
 class Transition(NamedTuple):
     done: jnp.ndarray
     action: jnp.ndarray
@@ -578,6 +563,12 @@ def parse_arguments(argstring=None):
         default="../results/"
     )
     parser.add_argument(
+        "--project",
+        type=str,
+        help="wandb Project Name",
+        default="Policy Distillation - MinAtar"
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         default=False
@@ -618,6 +609,7 @@ def make_configs(args):
         "FOLDER": args.folder,
         "OVERFIT": args.overfit,
         "OVERFIT_SEED": args.overfit_seed,
+        "PROJECT": args.project
     }
     es_config = {
         "popsize": args.popsize,  # Num of candidates (variations) generated every generation
@@ -652,11 +644,9 @@ def main(config, es_config):
     if not config["DEBUG"]:
         wandb_config = config.copy()
         wandb_config["es_config"] = es_config
-        wandb_run = wandb.init(project="Policy Distillation - MinAtar", config=wandb_config)
+        wandb_run = wandb.init(project=config["PROJECT"], config=wandb_config)
         wandb.define_metric("D")
         wandb.summary["D"] = es_config["dataset_size"]
-        #     wandb.define_metric("mean_fitness", summary="last")
-        #     wandb.define_metric("max_fitness", summary="last")
         
     # Load here so that OBS_MEAN and OBS_VAR are not logged to wandb, since they are massive arrays
     if config["CONST_NORMALIZE_OBS"]:

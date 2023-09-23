@@ -26,6 +26,7 @@ from purejaxrl.wrappers import (
     NormalizeVecObservation,
     NormalizeVecReward,
     ClipAction,
+    TransformObservation,
 )
 import time
 import argparse
@@ -93,8 +94,11 @@ def make_train(config):
     env, env_params = BraxGymnaxWrapper(config["ENV_NAME"]), None
     env = LogWrapper(env)
     env = ClipAction(env)
+    if config["CONST_NORMALIZE_OBS"]:
+        func = lambda x: (x - config["OBS_MEAN"]) / jnp.sqrt(config["OBS_VAR"] + 1e-8)
+        env = TransformObservation(env, func)
     env = VecEnv(env)
-    if config["NORMALIZE_OBS"]:
+    if config["NORMALIZE_OBS"] and not config["CONST_NORMALIZE_OBS"]:
         env = NormalizeVecObservation(env)
     if config["NORMALIZE_REWARD"]:
         env = NormalizeVecReward(env, config["GAMMA"])
@@ -112,9 +116,15 @@ def make_train(config):
             action_shape, activation=config["ACTIVATION"], width=config["WIDTH"]
         )
 
-        rng, _rng = jax.random.split(rng)
-        init_x = jnp.zeros(env.observation_space(env_params).shape)
-        network_params = network.init(_rng, init_x)
+        if not config["OVERFIT"]:
+            rng, _rng = jax.random.split(rng)
+            init_x = jnp.zeros(env.observation_space(env_params).shape)
+            network_params = network.init(_rng, init_x)
+        else:
+            print(f"OVERFIT SEED {config['OVERFIT_SEED']}")
+            _rng = jax.random.PRNGKey(config["OVERFIT_SEED"])
+            init_x = jnp.zeros(env.observation_space(env_params).shape)
+            network_params = network.init(_rng, init_x)
 
         assert (
                 synth_data[0].shape == env.observation_space(env_params).shape
@@ -328,7 +338,7 @@ def parse_arguments(argstring=None):
         "--rollouts",
         type=int,
         help="Number of BC policies trained per candidate",
-        default=16
+        default=2
     )
     parser.add_argument(
         "--sigma_init",
@@ -387,14 +397,29 @@ def parse_arguments(argstring=None):
         default=0.0
     )
     parser.add_argument(
-        "--normalize_obs",
+        "--const_normalize_obs",
         type=int,
         default=1
+    )
+    parser.add_argument(
+        "--normalize_obs",
+        type=int,
+        default=0
     )
     parser.add_argument(
         "--normalize_reward",
         type=int,
         default=1
+    )
+    parser.add_argument(
+        "--overfit_seed",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
+        "--overfit",
+        action="store_true",
+        default=False,
     )
 
     # Misc. args
@@ -415,6 +440,12 @@ def parse_arguments(argstring=None):
         type=str,
         help="Path to save folder",
         default="../results/"
+    )
+    parser.add_argument(
+        "--project",
+        type=str,
+        help="wandb Project Name",
+        default="Policy Distillation"
     )
     parser.add_argument(
         "--debug",
@@ -447,11 +478,15 @@ def make_configs(args):
         "DATA_NOISE": args.data_noise, # Add noise to data during BC training
         "ENV_PARAMS": {},
         "GAMMA": 0.99,
+        "CONST_NORMALIZE_OBS": bool(args.const_normalize_obs),
         "NORMALIZE_OBS": bool(args.normalize_obs),
         "NORMALIZE_REWARD": bool(args.normalize_reward),
         "DEBUG": args.debug,
         "SEED": args.seed,
         "FOLDER": args.folder,
+        "OVERFIT": args.overfit,
+        "OVERFIT_SEED": args.overfit_seed,
+        "PROJECT": args.project
     }
     es_config = {
         "popsize": args.popsize,  # Num of candidates (variations) generated every generation
@@ -472,6 +507,10 @@ def main(config, es_config):
     print("-----------------------------")
     for k, v in config.items():
         print(f"{k} : {v},")
+    if args.const_normalize_obs:
+        config["OBS_MEAN"] = jnp.load(f"../normalize_params/mean_{args.env}.npy")
+        config["OBS_VAR"] = jnp.load(f"../normalize_params/var_{args.env}.npy")
+
     print("-----------------------------")
     print("ES_CONFIG")
     for k, v in es_config.items():
@@ -481,7 +520,7 @@ def main(config, es_config):
     if not config["DEBUG"]:
         wandb_config = config.copy()
         wandb_config["es_config"] = es_config
-        wandb_run = wandb.init(project="Policy Distillation", config=wandb_config)
+        wandb_run = wandb.init(project=config["PROJECT"], config=wandb_config)
         wandb.define_metric("D")
         wandb.summary["D"] = es_config["dataset_size"]
         #     wandb.define_metric("mean_fitness", summary="last")
@@ -507,7 +546,6 @@ def main(config, es_config):
     multi_seed_BC = jax.vmap(single_seed_BC, in_axes=(0, None, None))  # Vectorize over seeds
     train_and_eval = jax.jit(
         jax.vmap(multi_seed_BC, in_axes=(None, 0, 0)))  # Vectorize over datasets
-
 
     # TODO: Refactor to allow for different RNGs for each dataset
     if len(jax.devices()) > 1:
@@ -545,8 +583,9 @@ def main(config, es_config):
             mean_ep_length = mean_ep_length.flatten()
 
             # Division by zero, watch out
-            fitness = (returns * dones).sum(axis=(-1, -2, -3)) / dones.sum(
-                axis=(-1, -2, -3))  # fitness, dim = (popsize)
+            # fitness = (returns * dones).sum(axis=(-1, -2, -3)) / dones.sum(
+            #     axis=(-1, -2, -3))  # fitness, dim = (popsize)
+            fitness = out["metrics"]["returned_episode_returns"][:, :, -1, :].mean(axis=(-1, -2))
             fitness = fitness.flatten()  # Necessary if pmap-ing to 2+ devices
         #         fitness = jnp.minimum(fitness, fitness.mean()+40)
 
@@ -618,4 +657,3 @@ if __name__ == "__main__":
     args = parse_arguments()
     config, es_config = make_configs(args)
     main(config, es_config)
-

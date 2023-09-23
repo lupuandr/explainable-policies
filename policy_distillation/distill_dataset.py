@@ -225,9 +225,15 @@ def make_train(config, train_images, train_labels, n_targets):
         elif config["NET"].lower() == "cnn":
             network = CNN(n_targets, activation=config["ACTIVATION"], ffwd_width=config["WIDTH"])
 
-        rng, _rng = jax.random.split(rng)
-        init_x = jnp.zeros(train_images[0,0].shape)
-        network_params = network.init(_rng, init_x)
+        if not config["OVERFIT"]:
+            rng, _rng = jax.random.split(rng)
+            init_x = jnp.zeros(train_images[0, 0].shape)
+            network_params = network.init(_rng, init_x)
+        else:
+            print(f"OVERFIT SEED {config['OVERFIT_SEED']}")
+            _rng = jax.random.PRNGKey(config["OVERFIT_SEED"])
+            init_x = jnp.zeros(train_images[0, 0].shape)
+            network_params = network.init(_rng, init_x)
 
         assert (
                 synth_data[0].shape == train_images[0,0].shape
@@ -471,6 +477,7 @@ def parse_arguments(argstring=None):
         default="zero"
     )
 
+
     # Inner loop args
     parser.add_argument(
         "--net",
@@ -524,6 +531,16 @@ def parse_arguments(argstring=None):
         action="store_true",
         default=False
     )
+    parser.add_argument(
+        "--overfit_seed",
+        type=int,
+        default=0
+    )
+    parser.add_argument(
+        "--overfit",
+        action="store_true",
+        default=False,
+    )
 
 
     # Misc. args
@@ -550,6 +567,12 @@ def parse_arguments(argstring=None):
         type=str,
         help="Path to save folder",
         default="../results/"
+    )
+    parser.add_argument(
+        "--project",
+        type=str,
+        help="wandb Project Name",
+        default="Dataset Distillation"
     )
     parser.add_argument(
         "--debug",
@@ -586,6 +609,9 @@ def make_configs(args):
         "SEED": args.seed,
         "FOLDER": args.folder,
         "DATASET": args.dataset,
+        "OVERFIT": args.overfit,
+        "OVERFIT_SEED": args.overfit_seed,
+        "PROJECT": args.project
     }
     es_config = {
         "popsize": args.popsize,  # Num of candidates (variations) generated every generation
@@ -621,7 +647,7 @@ def main(config, es_config):
         wandb_config = config.copy()
         wandb_config["es_config"] = es_config
 
-        wandb_run = wandb.init(project="Dataset Distillation", config=wandb_config)
+        wandb_run = wandb.init(project=config["PROJECT"], config=wandb_config)
         wandb.define_metric("D")
         wandb.summary["D"] = es_config["dataset_size"]
 
