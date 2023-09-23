@@ -34,7 +34,7 @@ def schedule_job(env, D, seed, epochs, folder, overfit, args):
         f"--epochs {epochs} " \
         f"--dataset_size {D} " \
         f"--seed {seed} " \
-        f"--project 'Behaviour-Distillation-ICLR' " \
+        f"--project Behaviour-Distillation-ICLR " \
         f"--folder {folder} " \
         f"--rollouts {rollouts} " \
 

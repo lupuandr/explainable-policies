@@ -590,9 +590,9 @@ def main(config, es_config):
             mean_ep_length = mean_ep_length.flatten()
 
             # Division by zero, watch out
-            # fitness = (returns * dones).sum(axis=(-1, -2, -3)) / dones.sum(
-            #     axis=(-1, -2, -3))  # fitness, dim = (popsize)
-            fitness = out["metrics"]["returned_episode_returns"][:, :, -1, :].mean(axis=(-1, -2))
+            fitness = (returns * dones).sum(axis=(-1, -2, -3)) / dones.sum(
+                axis=(-1, -2, -3))  # fitness, dim = (popsize)
+            # fitness = out["metrics"]["returned_episode_returns"][:, :, -1, :].mean(axis=(-1, -2))
             fitness = fitness.flatten()  # Necessary if pmap-ing to 2+ devices
         #         fitness = jnp.minimum(fitness, fitness.mean()+40)
 
