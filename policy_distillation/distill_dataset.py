@@ -150,7 +150,9 @@ class FlattenAndCast(object):
 
 
 class Cast(object):
-    dataset_name: str
+        
+    def __init__(self, dataset_name):
+        self.dataset_name = dataset_name
 
     def __call__(self, pic):
         """Cast from Pic to Array for CNN use"""
@@ -501,6 +503,11 @@ def parse_arguments(argstring=None):
         default=5e-3
     )
     parser.add_argument(
+        "--anneal_lr",
+        action="store_true",
+        default=False
+    )
+    parser.add_argument(
         "--momentum",
         type=float,
         help="NN optimizer momentum",
@@ -572,7 +579,7 @@ def make_configs(args):
         "ACTIVATION": args.activation,
         "WIDTH": args.width,
         "DATASET": args.dataset,
-        "ANNEAL_LR": False,  # False for Brax?
+        "ANNEAL_LR": args.anneal_lr,
         "DATA_NOISE": args.data_noise,  # Add noise to data during BC training
         "NORMALIZE": args.normalize,
         "DEBUG": args.debug,
@@ -733,10 +740,16 @@ def main(config, es_config):
                                                  or gen == 0 
                                                  or gen == es_config["log_interval"]-1):
                     final_dataset = param_reshaper.reshape_single(state.mean)
-                    images = wandb.Image(
-                        np.hstack(final_dataset["images"].reshape(-1, 28, 28, 1)),
-                        caption="Final images"
-                    )
+                    if "mnist" in config['DATASET'].lower():
+                        images = wandb.Image(
+                            np.hstack(final_dataset["images"].reshape(-1, 28, 28, 1)),
+                            caption="Final images"
+                        )
+                    else:
+                        images = wandb.Image(
+                            np.hstack(final_dataset["images"].reshape(-1, 32, 32, 3)),
+                            caption="Final images"
+                        )
                     final_labels = final_dataset["targets"] if es_config["learn_labels"] else fixed_targets
                     labels = wandb.Image(
                         np.array(final_labels),

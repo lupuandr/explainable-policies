@@ -20,8 +20,8 @@ executor.update_parameters(
     slurm_partition="learnfair",
     gpus_per_node=8,
     cpus_per_task=80,
-    timeout_min=180,
-    slurm_job_name="MNIST"
+    timeout_min=720,
+    slurm_job_name="CIFAR"
 )
 
 # ConvNet Sweep
@@ -29,19 +29,19 @@ jobs = []
 with executor.batch():
     job_idx = 0
     for D in [10]: #, 50]:
-        for dataset in ["MNIST", "FashionMNIST"]:
-            for init_mode in ["zero", "mean"]:
+        for init_mode in ["mean", "sample"]:
+            for dataset in ["CIFAR-10"]:#, "MNIST", "FashionMNIST"]:
                 for learn_labels in [False]:
-                    for sigma_init in [0.02, 0.01]: #[0.02, 0.01, 0.005, 0.0025]:
-                        for sigma_decay in [1.0, 0.999]: #, 0.995]:
-                            for lrate_init in [0.04, 0.01]: #[0.04, 0.02, 0.01, 0.005, 0.0025]: # Outer loop
-                                for lrate_decay in [1.0, 0.999]: #, 0.995]: # Outer loop
-                                    for lr in [0.1, 0.05]: #[0.2, 0.1, 0.05, 0.025]: # Inner loop
-                                        for epochs in [1000, 2000]: #[500, 1000, 2000, 4000]:
-                                            for width in [128]: #, 256]:
+                    for sigma_init in [0.01]: #[0.02, 0.01, 0.005, 0.0025]:
+                        for sigma_decay in [0.999]: #, 0.995]:
+                            for lrate_init in [0.01]: #[0.04, 0.02, 0.01, 0.005, 0.0025]: # Outer loop
+                                for lrate_decay in [0.999]: #, 0.995]: # Outer loop
+                                    for lr in [0.05]: #[0.2, 0.1, 0.05, 0.025]: # Inner loop
+                                        for epochs in [3000]: #[500, 1000, 2000, 4000]:
+                                            for width in [128, 256]: #, 256]:
                                                 for seed in [0]: #, 1, 2]:
 
-                                                    folder = f"/private/home/alupu/explainable-policies/results/mnist/{dataset}/CNN/D{D}_M{init_mode}_learn_labels{int(learn_labels)}_norm{int(True)}/si{sigma_init}_sd{sigma_decay}_li{lrate_init}_ld{lrate_decay}/lr{lr}_E{epochs}_W{width}/seed{seed}_job_idx{job_idx}/"
+                                                    folder = f"/private/home/alupu/explainable-policies/results/mnist/{dataset}/CNN/D{D}_M{init_mode}_learn_labels{int(learn_labels)}_norm{int(True)}/si{sigma_init}_sd{sigma_decay}_li{lrate_init}_ld{lrate_decay}/lr{lr}_anneal{int(True)}_E{epochs}_W{width}/seed{seed}_job_idx{job_idx}/"
                                                     if not os.path.exists(folder):
                                                         os.makedirs(folder)
                                                     argstring = \
@@ -69,6 +69,7 @@ with executor.batch():
                                                     # Log dataset to wandb
                                                     argstring = argstring + "--log_dataset "
                                                     argstring = argstring + "--normalize "
+                                                    argstring = argstring + "--anneal_lr "
 
                                                     if not args.dry:
                                                         job = executor.submit(train_from_arg_string, argstring)
