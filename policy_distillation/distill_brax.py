@@ -514,9 +514,9 @@ def main(config, es_config):
     print("-----------------------------")
     for k, v in config.items():
         print(f"{k} : {v},")
-    if args.const_normalize_obs:
-        config["OBS_MEAN"] = jnp.load(f"../normalize_params/mean_{args.env}.npy")
-        config["OBS_VAR"] = jnp.load(f"../normalize_params/var_{args.env}.npy")
+    if config["CONST_NORMALIZE_OBS"]:
+        config["OBS_MEAN"] = jnp.load(f"../normalize_params/mean_{config['ENV_NAME']}.npy")
+        config["OBS_VAR"] = jnp.load(f"../normalize_params/var_{config['ENV_NAME']}.npy")
 
     print("-----------------------------")
     print("ES_CONFIG")

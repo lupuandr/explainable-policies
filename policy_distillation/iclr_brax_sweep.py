@@ -23,14 +23,20 @@ if not os.path.exists(log_folder):
 def schedule_job(env, D, seed, epochs, folder, overfit, args):
     if not os.path.exists(folder):
         os.makedirs(folder)
+        
+    if overfit:
+        rollouts = 1
+    else:
+        rollouts = 2
 
     argstring = \
         f"--env {env} " \
         f"--epochs {epochs} " \
         f"--dataset_size {D} " \
         f"--seed {seed} " \
-        f"--project 'Behaviour Distillation ICLR' " \
+        f"--project 'Behaviour-Distillation-ICLR' " \
         f"--folder {folder} " \
+        f"--rollouts {rollouts} " \
 
     if overfit:
         argstring = argstring + f"--overfit --overfit_seed {420+seed}"
