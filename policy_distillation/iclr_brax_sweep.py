@@ -13,7 +13,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 # Common args:
-root = "/private/home/alupu/explainable-policies/results/ICLR/brax"
+root = "/private/home/alupu/explainable-policies/results/ICLR/brax/no_virtual_batch_norm/"
 
 log_folder = f"/checkpoint/alupu/explainable_policies/brax/submitit_logs/"
 if not os.path.exists(log_folder):
@@ -38,8 +38,10 @@ def schedule_job(env, D, seed, epochs, folder, overfit, args):
         f"--folder {folder} " \
         f"--rollouts {rollouts} " \
 
+    argstring = argstring + "--normalize_obs 1 --const_normalize_obs 0 "
+    
     if overfit:
-        argstring = argstring + f"--overfit --overfit_seed {420+seed}"
+        argstring = argstring + f"--overfit --overfit_seed {420+seed} "
 
     if not args.dry:
         job = executor.submit(train_from_arg_string, argstring)
@@ -52,7 +54,7 @@ def schedule_job(env, D, seed, epochs, folder, overfit, args):
 # SMALL ENVS
 executor = submitit.AutoExecutor(folder=log_folder)
 executor.update_parameters(
-    slurm_partition="learnfair",
+    slurm_partition="learnlab",
     gpus_per_node=8,
     cpus_per_task=80,
     timeout_min=240,
@@ -84,7 +86,7 @@ if not args.dry:
 # BIG ENVS
 executor = submitit.AutoExecutor(folder=log_folder)
 executor.update_parameters(
-    slurm_partition="learnfair",
+    slurm_partition="learnlab",
     gpus_per_node=8,
     cpus_per_task=80,
     timeout_min=720,

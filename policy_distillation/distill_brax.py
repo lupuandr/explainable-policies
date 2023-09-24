@@ -514,9 +514,6 @@ def main(config, es_config):
     print("-----------------------------")
     for k, v in config.items():
         print(f"{k} : {v},")
-    if config["CONST_NORMALIZE_OBS"]:
-        config["OBS_MEAN"] = jnp.load(f"../normalize_params/mean_{config['ENV_NAME']}.npy")
-        config["OBS_VAR"] = jnp.load(f"../normalize_params/var_{config['ENV_NAME']}.npy")
 
     print("-----------------------------")
     print("ES_CONFIG")
@@ -532,6 +529,11 @@ def main(config, es_config):
         wandb.summary["D"] = es_config["dataset_size"]
         #     wandb.define_metric("mean_fitness", summary="last")
         #     wandb.define_metric("max_fitness", summary="last")
+    
+    # Load here so that OBS_MEAN and OBS_VAR are not logged to wandb, since they are massive arrays
+    if config["CONST_NORMALIZE_OBS"]:
+        config["OBS_MEAN"] = jnp.load(f"../normalize_params/mean_{config['ENV_NAME']}.npy")
+        config["OBS_VAR"] = jnp.load(f"../normalize_params/var_{config['ENV_NAME']}.npy")
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)
