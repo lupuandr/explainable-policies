@@ -389,31 +389,31 @@ def parse_arguments(argstring=None):
         "--dataset_size",
         type=int,
         help="Number of state-action pairs",
-        default=64,
+        default=16,
     )
     parser.add_argument(
         "--popsize",
         type=int,
         help="Number of state-action pairs",
-        default=64
+        default=2048
     )
     parser.add_argument(
         "--generations",
         type=int,
         help="Number of ES generations",
-        default=1000
+        default=2000
     )
     parser.add_argument(
         "--rollouts",
         type=int,
         help="Number of BC policies trained per candidate",
-        default=16
+        default=2
     )
     parser.add_argument(
         "--sigma_init",
         type=float,
         help="Initial ES variance",
-        default=0.03
+        default=0.5
     )
     parser.add_argument(
         "--sigma_limit",
@@ -431,7 +431,7 @@ def parse_arguments(argstring=None):
         "--temperature",
         type=float,
         help="SNES temperature",
-        default=30.0
+        default=20.0
     )
     parser.add_argument(
         "--lrate_init",
@@ -455,7 +455,7 @@ def parse_arguments(argstring=None):
         "--es_strategy",
         type=str,
         help="Type of es strategy. Have OpenES and SNES",
-        default="OpenES",
+        default="SNES",
     )
 
     # Inner loop args
@@ -469,13 +469,13 @@ def parse_arguments(argstring=None):
         "--epochs",
         type=int,
         help="Number of BC epochs in the inner loop",
-        default=200
+        default=32
     )
     parser.add_argument(
         "--eval_envs",
         type=int,
         help="Number of evaluation environments",
-        default=16
+        default=8
     )
     parser.add_argument(
         "--activation",
@@ -487,7 +487,7 @@ def parse_arguments(argstring=None):
         "--width",
         type=int,
         help="NN width",
-        default=64
+        default=512
     )
     parser.add_argument(
         "--ffwd_layers",
@@ -499,7 +499,7 @@ def parse_arguments(argstring=None):
         "--lr",
         type=float,
         help="NN learning rate",
-        default=5e-2
+        default=0.03
     )
     parser.add_argument(
         "--data_noise",
@@ -510,7 +510,7 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--const_normalize_obs",
         type=int,
-        default=0
+        default=1
     )
     parser.add_argument(
         "--normalize_obs",
