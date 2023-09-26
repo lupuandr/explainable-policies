@@ -506,7 +506,7 @@ def main(config, es_config):
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)
-    _, param_reshaper = init_params(env, env_params, config, es_config)
+    _, param_reshaper = init_params(env, env_params, config)
 
     rng = jax.random.PRNGKey(config["SEED"])
 
