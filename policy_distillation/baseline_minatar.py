@@ -279,20 +279,20 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--popsize",
         type=int,
-        help="Number of state-action pairs",
-        default=64
+        help="ES population size",
+        default=2048
     )
     parser.add_argument(
         "--generations",
         type=int,
         help="Number of ES generations",
-        default=1000
+        default=2000
     )
     parser.add_argument(
         "--rollouts",
         type=int,
         help="Number of BC policies trained per candidate",
-        default=16
+        default=1
     )
     parser.add_argument(
         "--sigma_init",
@@ -316,7 +316,7 @@ def parse_arguments(argstring=None):
         "--temperature",
         type=float,
         help="SNES temperature",
-        default=30.0
+        default=20.0
     )
     parser.add_argument(
         "--lrate_init",
@@ -334,7 +334,7 @@ def parse_arguments(argstring=None):
         "--es_strategy",
         type=str,
         help="Type of es strategy. Have OpenES and SNES",
-        default="OpenES",
+        default="SNES",
     )
 
     # Inner loop args
@@ -348,7 +348,7 @@ def parse_arguments(argstring=None):
         "--eval_envs",
         type=int,
         help="Number of evaluation environments",
-        default=16
+        default=8
     )
     parser.add_argument(
         "--activation",
@@ -360,7 +360,7 @@ def parse_arguments(argstring=None):
         "--width",
         type=int,
         help="NN width",
-        default=64
+        default=512
     )
     parser.add_argument(
         "--ffwd_layers",
@@ -371,7 +371,7 @@ def parse_arguments(argstring=None):
     parser.add_argument(
         "--const_normalize_obs",
         type=int,
-        default=0
+        default=1
     )
     parser.add_argument(
         "--normalize_obs",
@@ -408,10 +408,22 @@ def parse_arguments(argstring=None):
         default=1
     )
     parser.add_argument(
+        "--save_interval",
+        type=int,
+        help="Num. generations between data saves",
+        default=10
+    )
+    parser.add_argument(
         "--folder",
         type=str,
         help="Path to save folder",
         default="../results/"
+    )
+    parser.add_argument(
+        "--project",
+        type=str,
+        help="wandb Project Name",
+        default="ES-Baselines-ICLR"
     )
     parser.add_argument(
         "--debug",
@@ -447,6 +459,7 @@ def make_configs(args):
         "DEBUG": args.debug,
         "SEED": args.seed,
         "FOLDER": args.folder,
+        "PROJECT": args.project
     }
     es_config = {
         "popsize": args.popsize,  # Num of candidates (variations) generated every generation
@@ -460,6 +473,7 @@ def make_configs(args):
         "lrate_decay": args.lrate_decay,
         "strategy": args.es_strategy,
         "temperature": args.temperature,
+        "save_interval": args.save_interval
     }
     return config, es_config
 
@@ -479,7 +493,7 @@ def main(config, es_config):
     if not config["DEBUG"]:
         wandb_config = config.copy()
         wandb_config["es_config"] = es_config
-        wandb_run = wandb.init(project="Baseline ES - MinAtar", config=wandb_config)
+        wandb_run = wandb.init(project=config["PROJECT"], config=wandb_config)
         # wandb.define_metric("D")
         # wandb.summary["D"] = es_config["dataset_size"]
         #     wandb.define_metric("mean_fitness", summary="last")
@@ -589,6 +603,25 @@ def main(config, es_config):
                     "Gen time": lap_end - lap_start,
                 })
             lap_start = lap_end
+
+        if gen % es_config["save_interval"] == 0 or gen == 0:
+            data = {
+                "state": state,
+                "fitness_over_gen": fitness_over_gen,
+                "max_fitness_over_gen": max_fitness_over_gen,
+                "fitness": fitness,
+                "config": config,
+                "es_config": es_config
+            }
+
+            directory = config["FOLDER"]
+            if not os.path.exists(directory):
+                os.mkdir(directory)
+            filename = directory + f"data_gen{gen}.pkl"
+            file = open(filename, 'wb')
+            pkl.dump(data, file)
+            file.close()
+
     print(f"Total time: {(lap_end - start) / 60:.1f}min")
 
     data = {
@@ -603,11 +636,10 @@ def main(config, es_config):
     directory = config["FOLDER"]
     if not os.path.exists(directory):
         os.mkdir(directory)
-    filename = directory + "data.pkl"
+    filename = directory + "data_final.pkl"
     file = open(filename, 'wb')
     pkl.dump(data, file)
     file.close()
-
 
 def train_from_arg_string(argstring):
     """Launches training from an argument string of the form
