@@ -170,7 +170,7 @@ def init_env(config):
     return env, env_params
 
 
-def init_params(env, env_params, es_config):
+def init_params(env, env_params, config):
     """Initialize dataset to be learned"""
     action_shape = env.action_space(env_params).shape[0]
     network = BCAgentContinuous(
@@ -382,7 +382,7 @@ def main(config, es_config):
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)
-    _, param_reshaper = init_params(env, env_params, es_config)
+    _, param_reshaper = init_params(env, env_params, config)
 
     rng = jax.random.PRNGKey(config["SEED"])
 

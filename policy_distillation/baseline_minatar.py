@@ -214,7 +214,7 @@ def init_env(config):
     return env, env_params
 
 
-def init_params(env, env_params, es_config):
+def init_params(env, env_params, config):
     """Initialize params to be learned"""
     if config["NET"].lower() == "mlp":
         network = BCAgent(
@@ -506,7 +506,7 @@ def main(config, es_config):
 
     # Init environment and dataset (params)
     env, env_params = init_env(config)
-    _, param_reshaper = init_params(env, env_params, es_config)
+    _, param_reshaper = init_params(env, env_params, config, es_config)
 
     rng = jax.random.PRNGKey(config["SEED"])
 
