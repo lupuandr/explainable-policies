@@ -420,49 +420,49 @@ def parse_arguments(argstring=None):
         "--popsize",
         type=int,
         help="ES population size",
-        default=512
+        default=2048
     )
     parser.add_argument(
         "--generations",
         type=int,
         help="Number of ES generations",
-        default=200
+        default=1000
     )
     parser.add_argument(
         "--rollouts",
         type=int,
         help="Number of BC policies trained per candidate",
-        default=4
+        default=2
     )
     parser.add_argument(
         "--sigma_init",
         type=float,
         help="Initial ES variance",
-        default=0.03
+        default=0.02
     )
     parser.add_argument(
         "--sigma_limit",
         type=float,
         help="ES variance lower bound (if decaying)",
-        default=0.01
+        default=0.001
     )
     parser.add_argument(
         "--sigma_decay",
         type=float,
         help="ES variance decay factor",
-        default=1.0
+        default=0.999
     )
     parser.add_argument(
         "--lrate_init",
         type=float,
         help="ES initial lrate",
-        default=0.05
+        default=0.01
     )
     parser.add_argument(
         "--lrate_decay",
         type=float,
         help="ES lrate decay factor",
-        default=1.0
+        default=0.999
     )
     parser.add_argument(
         "--learn_labels",
@@ -474,7 +474,7 @@ def parse_arguments(argstring=None):
         "--init_mode",
         type=str,
         help="zero/sample/mean",
-        default="zero"
+        default="mean"
     )
 
 
@@ -483,13 +483,13 @@ def parse_arguments(argstring=None):
         "--net",
         type=str,
         help="MLP / CNN",
-        default="mlp"
+        default="CNN"
     )
     parser.add_argument(
         "--epochs",
         type=int,
         help="Number of BC epochs in the inner loop",
-        default=10
+        default=1000
     )
     parser.add_argument(
         "--activation",
@@ -507,7 +507,7 @@ def parse_arguments(argstring=None):
         "--lr",
         type=float,
         help="NN learning rate",
-        default=5e-3
+        default=0.1
     )
     parser.add_argument(
         "--anneal_lr",
