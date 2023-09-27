@@ -57,14 +57,14 @@ executor.update_parameters(
     slurm_partition="learnlab",
     gpus_per_node=8,
     cpus_per_task=80,
-    timeout_min=300,
-    slurm_job_name="hopper",
+    timeout_min=360,
+    slurm_job_name="D4_brax",
     slurm_exclude="learnfair2058"
 )
 
 jobs = []
 with executor.batch():
-    for env in ["hopper"]:
+    for env in ["halfcheetah", "inverted_pendulum", "inverted_double_pendulum", "walker2d"]:
         for D in [4]:
             for seed in [0, 1, 2]:
                 for overfit in [False]:

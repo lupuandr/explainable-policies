@@ -733,6 +733,8 @@ def main(config, es_config):
                 axis=(-1, -2, -3))
             mean_ep_length = mean_ep_length.flatten()
 
+            
+            # TODO: ACTUALLY UNDERSTAND THIS DIFFERENCE
             # Division by zero, watch out
             # fitness = (returns * dones).sum(axis=(-1, -2, -3)) / dones.sum(
             #     axis=(-1, -2, -3))  # fitness, dim = (popsize)
