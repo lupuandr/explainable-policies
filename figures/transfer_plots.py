@@ -66,14 +66,16 @@ def get_data(env):
     return all_data
 
 
-def get_transfer_plot(env):
+def get_transfer_plot(env_name):
 
-    all_data = get_data(env)
+    print(env_name)
+    print()
+    all_data = get_data(env_name)
 
     fitness = {}
     for overfit in [True, False]:
 
-        data = all_data[(env, overfit, 0)]
+        data = all_data[(env_name, overfit, 0)]
         config = data["config"]
         es_config = data["es_config"]
 
@@ -112,10 +114,10 @@ def get_transfer_plot(env):
 
         vmapped_get_fitness = jax.vmap(get_fitness, in_axes=(None, None, 0, 0))
 
-        widths = [32, 64, 128, 256, 512, 1024, 2056]
+        widths = [32, 64, 128, 256, 512, 1024, 2056][:4]
 
-        lrs = jnp.array([0.001 * 2 ** i for i in range(10)])
-        update_epochs = [x for x in range(100, 520, 20)]
+        lrs = jnp.array([0.001 * 2 ** i for i in range(10)])[:4]
+        update_epochs = [x for x in range(100, 600, 100)]
 
         for width in widths:
             for epochs in update_epochs:
@@ -124,6 +126,7 @@ def get_transfer_plot(env):
 
                 combo_fitness = vmapped_get_fitness(width, epochs, lrs, batch_rngs)
                 fitness[(overfit, width, epochs)] = combo_fitness
+                print(f"(overfit={overfit}, width={width}, epochs={epochs}) : {combo_fitness.mean()}")
 
     data_tuples = []
     for (overfit, width, epochs), fitness_values in fitness.items():
@@ -133,7 +136,7 @@ def get_transfer_plot(env):
     # Convert list of tuples to DataFrame
     df = pd.DataFrame(data_tuples, columns=["Overfit", "Width", "Epochs", "Fitness"])
 
-    df.to_pickle(f'{env}.pkl')
+    df.to_pickle(f'transfer_plots/{env_name}_violin_data.pkl')
 
     # Create a violin plot
     plt.figure(figsize=(12, 6))
@@ -144,9 +147,13 @@ def get_transfer_plot(env):
     plt.ylabel('Fitness')
 
     # Save the plot to a file
-    plt.savefig(f'{env}.pdf')
+    plt.savefig(f'transfer_plots/{env_name}_violin.pdf')
 
     # Show the plot
     plt.show()
+    
+    
+if __name__ == "__main__":
+    get_transfer_plot("hopper")
 
 
