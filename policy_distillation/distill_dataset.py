@@ -797,7 +797,7 @@ def main(config, es_config):
             data = {
                 "state": state,
                 "fitness_over_gen": fitness_over_gen,
-                "max_fitness_over_gen": max_fitness_over_gen,
+                f"{config['DATASET']}:train_accuracy": train_acc.mean(),
                 "fitness": fitness,
                 "config": config,
                 "es_config": es_config
@@ -816,7 +816,7 @@ def main(config, es_config):
     data = {
         "state": state,
         "fitness_over_gen": fitness_over_gen,
-        "max_fitness_over_gen": max_fitness_over_gen,
+        f"{config['DATASET']}:train_accuracy": train_acc.mean(),
         "fitness": fitness,
         "config": config,
         "es_config": es_config
