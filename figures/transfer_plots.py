@@ -114,9 +114,9 @@ def get_transfer_plot(env_name):
 
         vmapped_get_fitness = jax.vmap(get_fitness, in_axes=(None, None, 0, 0))
 
-        widths = [32, 64, 128, 256, 512, 1024, 2056][:4]
+        widths = [32, 64, 128, 256, 512, 1024, 2056]
 
-        lrs = jnp.array([0.001 * 2 ** i for i in range(10)])[:4]
+        lrs = jnp.array([0.0005 * 2 ** (i/2) for i in range(10)])
         update_epochs = [x for x in range(100, 600, 100)]
 
         for width in widths:

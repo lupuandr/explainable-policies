@@ -11,7 +11,7 @@ executor.update_parameters(
     slurm_partition="learnlab",
     gpus_per_node=1,
     cpus_per_task=10,
-    timeout_min=60,
+    timeout_min=600,
     slurm_job_name="violin",
 )
 
