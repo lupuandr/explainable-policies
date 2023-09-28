@@ -43,6 +43,7 @@ with executor.batch():
                         f"--seed {seed} " \
                         f"--project Behaviour-Distillation-ICLR " \
                         f"--folder {folder} " \
+                        f"--popsize 512 " \
 
 
                     # Log dataset to wandb
